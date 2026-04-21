@@ -10,7 +10,15 @@ namespace lolog {
 
 namespace {
 
+#ifdef LOLOG_VERBOSE
+// Compile-time force for debug builds; overrides LoSettings `lolog.verbose` so dev firmware always
+// emits debug traces regardless of persisted config.
+bool g_verbose = (LOLOG_VERBOSE ? true : false);
+constexpr bool kVerboseForced = (LOLOG_VERBOSE ? true : false);
+#else
 bool g_verbose = false;
+constexpr bool kVerboseForced = false;
+#endif
 bool g_registered = false;
 
 void lolog_on_cfg_changed(void*) { LoLog::loadFromSettings(); }
@@ -48,6 +56,7 @@ void LoLog::registerConfigSchema() {
 }
 
 void LoLog::loadFromSettings() {
+  if (kVerboseForced) return;  // -DLOLOG_VERBOSE pins verbose=true at compile time.
   losettings::LoSettings st("lolog");
   g_verbose = st.getBool("verbose", false);
 }
@@ -55,6 +64,7 @@ void LoLog::loadFromSettings() {
 bool LoLog::isVerbose() { return g_verbose; }
 
 void LoLog::setVerbose(bool on) {
+  if (kVerboseForced) return;  // cannot override a compile-time pin at runtime.
   g_verbose = on;
   losettings::LoSettings st("lolog");
   st.setBool("verbose", on);
