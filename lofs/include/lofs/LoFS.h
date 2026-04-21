@@ -9,6 +9,12 @@ public:
   static bool mount(const char* prefix, lofs::FsBackend* backend);
   static bool unmount(const char* prefix);
   static lofs::FsBackend* resolveBackend(const char* virtual_path, char* stripped_out, size_t stripped_cap);
+
+  /** Override the platform-default internal-flash fs driver (e.g. when the app has chosen SPIFFS
+   *  instead of LittleFS on ESP32). Call before `mountDefaults` / any `LoFS::open` so lofs reuses
+   *  the same mounted volume as the host firmware. `nullptr` restores the platform default. */
+  static void bindInternalFs(lofs::FSys* fs);
+
   static void mountDefaults();
 
   static File open(const char* filepath, uint8_t mode);

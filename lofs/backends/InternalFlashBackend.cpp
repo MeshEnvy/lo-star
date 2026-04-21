@@ -1,21 +1,33 @@
 #include "InternalFlashBackend.h"
 
-#if defined(ESP32_PLATFORM)
-#include <LittleFS.h>
-#elif defined(RP2040_PLATFORM)
+#if defined(ESP32_PLATFORM) || defined(RP2040_PLATFORM)
 #include <LittleFS.h>
 #elif defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
 #include <InternalFileSystem.h>
 #endif
 
+/** Weak hook mirroring `lofs_variant_external_fs`: apps can supply a specific internal-flash fs
+ *  (SPIFFS, LittleFS, ...) at link time instead of the platform default. `nullptr` = fall back. */
+extern "C" __attribute__((weak)) lofs::FSys* lofs_variant_internal_fs(void) { return nullptr; }
+
 namespace lofs {
 
 InternalFlashBackend::InternalFlashBackend() { bindPlatformFs(); }
 
+void InternalFlashBackend::bindFs(FSys* fs) {
+  if (fs) {
+    _fs = fs;
+  } else {
+    bindPlatformFs();
+  }
+}
+
 void InternalFlashBackend::bindPlatformFs() {
-#if defined(ESP32_PLATFORM)
-  _fs = &LittleFS;
-#elif defined(RP2040_PLATFORM)
+  if (FSys* v = lofs_variant_internal_fs()) {
+    _fs = v;
+    return;
+  }
+#if defined(ESP32_PLATFORM) || defined(RP2040_PLATFORM)
   _fs = &LittleFS;
 #elif defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   _fs = &InternalFS;
@@ -104,7 +116,10 @@ bool InternalFlashBackend::rmdir(const char* path, bool recursive) {
 uint64_t InternalFlashBackend::totalBytes() {
   if (!_fs) return 0;
 #if defined(ESP32_PLATFORM) || defined(RP2040_PLATFORM)
-  return LittleFS.totalBytes();
+  // Best-effort: `fs::FS` base class doesn't expose totalBytes, so only report when the bound
+  // driver is the platform default. Apps using SPIFFS/other drivers should query them directly.
+  if (_fs == &LittleFS) return LittleFS.totalBytes();
+  return 0;
 #else
   return 0;
 #endif
@@ -113,7 +128,8 @@ uint64_t InternalFlashBackend::totalBytes() {
 uint64_t InternalFlashBackend::usedBytes() {
   if (!_fs) return 0;
 #if defined(ESP32_PLATFORM) || defined(RP2040_PLATFORM)
-  return LittleFS.usedBytes();
+  if (_fs == &LittleFS) return LittleFS.usedBytes();
+  return 0;
 #else
   return 0;
 #endif

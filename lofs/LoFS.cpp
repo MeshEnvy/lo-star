@@ -196,6 +196,10 @@ lofs::FsBackend* LoFS::resolveBackend(const char* virtual_path, char* stripped_o
   return ok ? b : nullptr;
 }
 
+void LoFS::bindInternalFs(lofs::FSys* fs) {
+  lofs::InternalFlashBackend::instance().bindFs(fs);
+}
+
 void LoFS::mountDefaults() {
   auto& inb = lofs::InternalFlashBackend::instance();
   auto& exb = lofs::ExternalFlashBackend::instance();

@@ -8,6 +8,9 @@ class InternalFlashBackend : public FsBackend {
 public:
   static InternalFlashBackend& instance();
 
+  /** Runtime override (see `LoFS::bindInternalFs`). Passing `nullptr` re-binds the platform default. */
+  void bindFs(FSys* fs);
+
   bool available() const override;
   File open(const char* path, uint8_t mode) override;
   File open(const char* path, const char* mode) override;
