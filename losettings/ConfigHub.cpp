@@ -304,7 +304,7 @@ static void h_config_set(locommand::Context& ctx) {
     ctx.out.appendf("Err - %s\n", err);
     return;
   }
-  ctx.out.append("OK\n");
+  ctx.out.appendf("OK - %s = %s\n", ctx.argv[0], valbuf);
 }
 
 static void h_config_unset(locommand::Context& ctx) {
