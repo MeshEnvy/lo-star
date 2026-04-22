@@ -251,19 +251,18 @@ void Lofi::ensureTables() {
 
 void Lofi::rememberKnownUnlocked(const char* ssid, const char* psk) {
   if (!ssid || !ssid[0]) return;
-  lodb_uuid_t id = lodb_new_uuid(ssid, 0);
   KnownWifi k = KnownWifi_init_zero;
   strncpy(k.ssid, ssid, sizeof(k.ssid) - 1);
   strncpy(k.psk, psk ? psk : "", sizeof(k.psk) - 1);
   k.last_connected = (uint32_t)(millis() / 1000);
   KnownWifi ex = KnownWifi_init_zero;
-  if (_db.get("known_wifi", id, &ex) == LODB_OK) {
+  if (_db.get("known_wifi", ssid, &ex) == LODB_OK) {
     k.favorite = ex.favorite;
     k.connect_count = ex.connect_count + 1;
-    (void)_db.update("known_wifi", id, &k);
+    (void)_db.update("known_wifi", ssid, &k);
   } else {
     k.connect_count = 1;
-    (void)_db.insert("known_wifi", id, &k);
+    (void)_db.insert("known_wifi", ssid, &k);
   }
   while (_db.count("known_wifi") > 8) {
     auto rows = _db.select("known_wifi", LoDbFilter(), cmp_known_by_time, 0);
@@ -273,7 +272,7 @@ void Lofi::rememberKnownUnlocked(const char* ssid, const char* psk) {
     strncpy(ssid_copy, oldest->ssid, sizeof(ssid_copy) - 1);
     ssid_copy[sizeof(ssid_copy) - 1] = '\0';
     LoDb::freeRecords(rows);
-    (void)_db.deleteRecord("known_wifi", lodb_new_uuid(ssid_copy, 0));
+    (void)_db.deleteRecord("known_wifi", ssid_copy);
   }
 }
 
@@ -344,8 +343,7 @@ bool Lofi::getKnownWifiPassword(const char* ssid, char* out_pwd, size_t pwd_cap)
 bool Lofi::forgetKnownWifi(const char* ssid) {
   ensureTables();
   if (!ssid || !ssid[0]) return false;
-  lodb_uuid_t id = lodb_new_uuid(ssid, 0);
-  bool ok = _db.deleteRecord("known_wifi", id) == LODB_OK;
+  bool ok = _db.deleteRecord("known_wifi", ssid) == LODB_OK;
   if (!ok) return false;
   if (strcmp(s_active_ssid, ssid) == 0) {
     losettings::LoSettings st("lofi");
