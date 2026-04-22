@@ -10,8 +10,12 @@
 #if __has_include(<lolog/LoLog.h>)
 #include <lolog/LoLog.h>
 #define LOSETTINGS_LOG_DEBUG(...) ::lolog::LoLog::debug("losettings", __VA_ARGS__)
+#define LOSETTINGS_LOG_INFO(...) ::lolog::LoLog::info("losettings", __VA_ARGS__)
+#define LOSETTINGS_LOG_ERROR(...) ::lolog::LoLog::error("losettings", __VA_ARGS__)
 #else
 #define LOSETTINGS_LOG_DEBUG(...) ((void)0)
+#define LOSETTINGS_LOG_INFO(...) ((void)0)
+#define LOSETTINGS_LOG_ERROR(...) ((void)0)
 #endif
 
 namespace losettings {
@@ -320,5 +324,55 @@ int LoSettings::listKeys(char keys[][32], int max) {
   LoDb::freeRecords(rows);
   return n;
 }
+
+#if defined(LOSETTINGS_TEST)
+bool losettings_run_selftest(const char* mount) {
+  static bool ran = false;
+  if (ran) return true;
+  ran = true;
+
+  bool ok = true;
+  auto expect = [&](bool cond, const char* msg) {
+    if (!cond) {
+      LOSETTINGS_LOG_ERROR("selftest FAIL: %s", msg);
+      ok = false;
+    }
+  };
+
+  LoSettings st("losettings_selftest", mount);
+  expect(st.clear(), "clear");
+  expect(st.setBool("b", true), "setBool");
+  expect(st.setInt("i", -12345), "setInt");
+  expect(st.setUInt("u", 12345u), "setUInt");
+  expect(st.setFloat("f", 3.25f), "setFloat");
+  expect(st.setString("s", "hello"), "setString");
+  uint8_t bytes_in[8] = {0, 1, 2, 3, 0xaa, 0xbb, 0xcc, 0xdd};
+  expect(st.setBytes("x", bytes_in, sizeof(bytes_in)), "setBytes");
+
+  expect(st.getBool("b", false) == true, "getBool");
+  expect(st.getInt("i", 0) == -12345, "getInt");
+  expect(st.getUInt("u", 0) == 12345u, "getUInt");
+  float fv = st.getFloat("f", 0.0f);
+  expect(fv > 3.249f && fv < 3.251f, "getFloat");
+
+  char sbuf[16];
+  size_t sn = st.getString("s", sbuf, sizeof(sbuf), "");
+  expect(sn == 5 && strcmp(sbuf, "hello") == 0, "getString");
+
+  uint8_t bytes_out[8] = {};
+  size_t xn = st.getBytes("x", bytes_out, sizeof(bytes_out));
+  expect(xn == sizeof(bytes_in) && memcmp(bytes_in, bytes_out, sizeof(bytes_in)) == 0, "getBytes");
+
+  char keys[16][32];
+  int key_n = st.listKeys(keys, 16);
+  expect(key_n >= 6, "listKeys");
+
+  expect(st.remove("s"), "remove");
+  expect(!st.has("s"), "has false after remove");
+  expect(st.clear(), "clear end");
+  LOSETTINGS_LOG_INFO("selftest %s", ok ? "PASS" : "FAIL");
+  return ok;
+}
+#endif
 
 }  // namespace losettings

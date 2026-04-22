@@ -46,4 +46,8 @@ private:
   bool _registered = false;
 };
 
+#if defined(LOSETTINGS_TEST)
+bool losettings_run_selftest(const char* mount = "/__ext__");
+#endif
+
 }  // namespace losettings
