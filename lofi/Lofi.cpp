@@ -154,8 +154,8 @@ static std::string shell_quote_single(const char* s) {
   return shell_quote_single(s, strlen(s));
 }
 
-static void log_curl_replay_forbidden(const char* full_url, const char* bearer, const char* body, uint16_t n,
-                                      const char* hdr_name, const char* hdr_val) {
+static void log_curl_replay(const char* full_url, const char* bearer, const char* body, uint16_t n,
+                            const char* hdr_name, const char* hdr_val) {
   if (!::lolog::LoLog::isVerbose()) return;
   if (!full_url || !body) return;
 
@@ -174,7 +174,7 @@ static void log_curl_replay_forbidden(const char* full_url, const char* bearer, 
   }
   cmd += " --data-binary ";
   cmd += shell_quote_single(body, n);
-  ::lolog::LoLog::debug("lofi", "403 replay curl: %s", cmd.c_str());
+  ::lolog::LoLog::debug("lofi", "POST replay curl: %s", cmd.c_str());
 }
 
 class DevNullStream : public Stream {
@@ -456,7 +456,7 @@ HttpResult Lofi::httpPost(const char* url, const char* bearer, const char* body,
   const char* normalized = normalize_bearer_token(bearer, bearer_norm, sizeof(bearer_norm));
   if (is_https(url)) r = post_https(url, normalized, body, n, hn, hv);
   else r = post_plain(url, normalized, body, n, hn, hv);
-  if (r.status == 403) log_curl_replay_forbidden(url, normalized, body, n, hn, hv);
+  log_curl_replay(url, normalized, body, n, hn, hv);
   return r;
 }
 
