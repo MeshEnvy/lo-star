@@ -68,6 +68,23 @@ git submodule update --init --recursive
 
 so `lo-star` (and nested deps such as Nanopb) are present for CI and local builds.
 
+## Critical: Nanopb compile flag consistency
+
+`lo-star` uses nanopb with:
+
+```text
+PB_FIELD_32BIT=1
+```
+
+This define must be applied consistently to:
+
+- your app/library sources that include generated `*.pb.h`
+- the nanopb runtime sources (`pb_encode.c`, `pb_decode.c`, `pb_common.c`)
+
+If only one side gets the define, protobuf decode can silently return wrong values (for example `kind=0`, empty bytes) even though files look valid on disk.
+
+In PlatformIO, put `-D PB_FIELD_32BIT=1` in shared env `build_flags` so both application code and dependencies are compiled with the same setting.
+
 ## Project branches based on the latest upstream tag
 
 Treat **upstream tags** as stable bases. For each firmware fork:
