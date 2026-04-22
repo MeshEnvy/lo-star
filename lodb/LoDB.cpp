@@ -208,21 +208,10 @@ LoDbError LoDb::insert(const char *table_name, lodb_uuid_t uuid, const void *rec
 
     size_t encoded_size = stream.bytes_written;
 
-    auto file = LoFS::open(file_path, FILE_O_WRITE);
-    if (!file) {
-        LODB_LOG_ERROR("Failed to open file for writing: %s", file_path);
+    if (!LoFS::writeFileAtomic(file_path, buffer.get(), encoded_size)) {
+        LODB_LOG_ERROR("Failed atomic write for insert: %s", file_path);
         return LODB_ERR_IO;
     }
-
-    size_t written = file.write(buffer.get(), encoded_size);
-    if (written != encoded_size) {
-        LODB_LOG_ERROR("Failed to write file, wrote %u of %u bytes", (unsigned)written, (unsigned)encoded_size);
-        file.close();
-        return LODB_ERR_IO;
-    }
-
-    file.flush();
-    file.close();
     return LODB_OK;
 }
 
@@ -255,6 +244,8 @@ LoDbError LoDb::get(const char *table_name, lodb_uuid_t uuid, void *record_out)
 
     if (file_size == 0) {
         LODB_LOG_ERROR("Record file is empty: " LODB_UUID_FMT, LODB_UUID_ARGS(uuid));
+        (void)LoFS::remove(file_path);
+        LODB_LOG_WARN("Removed empty record file: %s", file_path);
         return LODB_ERR_IO;
     }
 
@@ -302,22 +293,10 @@ LoDbError LoDb::update(const char *table_name, lodb_uuid_t uuid, const void *rec
 
     size_t encoded_size = stream.bytes_written;
 
-    LoFS::remove(file_path);
-    auto file = LoFS::open(file_path, FILE_O_WRITE);
-    if (!file) {
-        LODB_LOG_ERROR("Failed to open file for update: %s", file_path);
+    if (!LoFS::writeFileAtomic(file_path, buffer.get(), encoded_size)) {
+        LODB_LOG_ERROR("Failed atomic write for update: %s", file_path);
         return LODB_ERR_IO;
     }
-
-    size_t written = file.write(buffer.get(), encoded_size);
-    if (written != encoded_size) {
-        LODB_LOG_ERROR("Failed to write updated file");
-        file.close();
-        return LODB_ERR_IO;
-    }
-
-    file.flush();
-    file.close();
 
     LODB_LOG_INFO("Updated record: " LODB_UUID_FMT, LODB_UUID_ARGS(uuid));
     return LODB_OK;
