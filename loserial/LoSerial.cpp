@@ -1,5 +1,6 @@
 #include "LoSerial.h"
 
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 
@@ -57,11 +58,36 @@ void LoSerial::printf(const char* fmt, ...) {
 
 void LoSerial::vprintf(const char* fmt, va_list ap) {
   if (!fmt) return;
-  char buf[256];
-  int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  char stack_buf[256];
+  va_list ap_probe;
+  va_copy(ap_probe, ap);
+  int n = vsnprintf(stack_buf, sizeof(stack_buf), fmt, ap_probe);
+  va_end(ap_probe);
   if (n <= 0) return;
-  size_t len = (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf) - 1;
-  writeChunked(buf, len);
+
+  if ((size_t)n < sizeof(stack_buf)) {
+    writeChunked(stack_buf, (size_t)n);
+    return;
+  }
+
+  size_t needed = (size_t)n + 1;
+  char* heap_buf = (char*)malloc(needed);
+  if (!heap_buf) {
+    // OOM fallback: emit best-effort truncated line from stack buffer.
+    writeChunked(stack_buf, strlen(stack_buf));
+    return;
+  }
+
+  va_list ap_emit;
+  va_copy(ap_emit, ap);
+  int n2 = vsnprintf(heap_buf, needed, fmt, ap_emit);
+  va_end(ap_emit);
+  if (n2 > 0) {
+    size_t out_len = (size_t)n2;
+    if (out_len >= needed) out_len = needed - 1;
+    writeChunked(heap_buf, out_len);
+  }
+  free(heap_buf);
 }
 
 }  // namespace loserial

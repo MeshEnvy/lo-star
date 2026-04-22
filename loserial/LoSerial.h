@@ -33,7 +33,7 @@ public:
   /** Mesh/USB CLI reply: `"  -> "` prefix + chunked body + CRLF. `reply` may be nullptr (no-op). */
   static void printMeshCliReply(const char* reply);
 
-  /** Printf-style via an internal stack buffer (capped). */
+  /** Printf-style output (heap fallback for long formatted lines). */
   static void printf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 
   /** Same as printf for pre-packaged va_list. */
