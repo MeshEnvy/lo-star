@@ -19,9 +19,6 @@ struct HttpResult {
   int err;
 };
 
-/** Optional logger hook. Default no-op; apps that want logs override with a strong symbol. */
-extern "C" __attribute__((weak)) void lofi_log(const char* msg);
-
 /** Called by Lofi when an async operation (e.g. WiFi scan) starts/ends. Default no-op. */
 extern "C" __attribute__((weak)) void lofi_async_busy(bool busy);
 

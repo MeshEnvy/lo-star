@@ -9,11 +9,14 @@ extern "C" esp_err_t esp_crt_bundle_attach(void* conf);
 
 #include <losettings/LoSettings.h>
 #include <losettings/ConfigHub.h>
+#include <lolog/LoLog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #ifndef LOFI_HTTP_TIMEOUT_MS
 #define LOFI_HTTP_TIMEOUT_MS 12000
@@ -28,22 +31,11 @@ extern "C" esp_err_t esp_crt_bundle_attach(void* conf);
 #define LOFI_WIFI_SCAN_TIMEOUT_MS 30000
 #endif
 
-extern "C" __attribute__((weak)) void lofi_log(const char*) {}
 extern "C" __attribute__((weak)) void lofi_async_busy(bool) {}
 /** Firmware may provide a strong definition (e.g. Lotato) to refresh app caches after LoSettings change. */
 extern "C" __attribute__((weak)) void lofi_on_lo_settings_changed(void) {}
 
 namespace {
-
-void dbg(const char* fmt, ...) {
-  char buf[192];
-  va_list ap;
-  va_start(ap, fmt);
-  int n = vsnprintf(buf, sizeof(buf), fmt, ap);
-  va_end(ap);
-  if (n < 0) return;
-  lofi_log(buf);
-}
 
 constexpr int kScanMax = 20;
 
@@ -101,6 +93,89 @@ static void scan_rssi_bars(int32_t rssi, char out[7]) {
 }
 
 static bool is_https(const char* url) { return url && strncmp(url, "https://", 8) == 0; }
+
+static bool ci_starts_with(const char* s, const char* prefix) {
+  if (!s || !prefix) return false;
+  while (*prefix) {
+    if (!*s) return false;
+    if (tolower((unsigned char)*s) != tolower((unsigned char)*prefix)) return false;
+    s++;
+    prefix++;
+  }
+  return true;
+}
+
+static const char* normalize_bearer_token(const char* bearer, char* out, size_t out_cap) {
+  if (!out || out_cap < 1) return "";
+  out[0] = '\0';
+  if (!bearer) return out;
+
+  const char* start = bearer;
+  while (*start && isspace((unsigned char)*start)) start++;
+  const char* end = bearer + strlen(bearer);
+  while (end > start && isspace((unsigned char)*(end - 1))) end--;
+  if (end <= start) return out;
+
+  // Strip common mistaken prefixes users paste into config values.
+  for (int i = 0; i < 2; i++) {
+    if (ci_starts_with(start, "bearer ")) {
+      start += 7;
+    } else if (ci_starts_with(start, "token ")) {
+      start += 6;
+    } else {
+      break;
+    }
+    while (*start && isspace((unsigned char)*start)) start++;
+    while (end > start && isspace((unsigned char)*(end - 1))) end--;
+  }
+
+  size_t n = (size_t)(end - start);
+  if (n > out_cap - 1) n = out_cap - 1;
+  if (n > 0) memcpy(out, start, n);
+  out[n] = '\0';
+  return out;
+}
+
+static std::string shell_quote_single(const char* s, size_t n) {
+  std::string out;
+  out.reserve(n + 8);
+  out.push_back('\'');
+  for (size_t i = 0; i < n; i++) {
+    char c = s[i];
+    if (c == '\'') out += "'\"'\"'";
+    else out.push_back(c);
+  }
+  out.push_back('\'');
+  return out;
+}
+
+static std::string shell_quote_single(const char* s) {
+  if (!s) return "''";
+  return shell_quote_single(s, strlen(s));
+}
+
+static void log_curl_replay_forbidden(const char* full_url, const char* bearer, const char* body, uint16_t n,
+                                      const char* hdr_name, const char* hdr_val) {
+  if (!::lolog::LoLog::isVerbose()) return;
+  if (!full_url || !body) return;
+
+  std::string cmd = "curl -sS -i -v --http1.1 -X POST ";
+  cmd += shell_quote_single(full_url);
+  cmd += " -H 'Content-Type: application/json'";
+  if (bearer && bearer[0]) {
+    std::string auth = std::string("Authorization: Bearer ") + bearer;
+    cmd += " -H ";
+    cmd += shell_quote_single(auth.c_str());
+  }
+  if (hdr_name && hdr_name[0] && hdr_val) {
+    std::string extra = std::string(hdr_name) + ": " + hdr_val;
+    cmd += " -H ";
+    cmd += shell_quote_single(extra.c_str());
+  }
+  cmd += " --data-binary ";
+  cmd += shell_quote_single(body, n);
+  ::lolog::LoLog::debug("lofi", "403 replay curl: %s", cmd.c_str());
+}
 
 class DevNullStream : public Stream {
 public:
@@ -165,7 +240,7 @@ static lofi::HttpResult post_https(const char* url, const char* bearer, const ch
 
   esp_http_client_handle_t client = esp_http_client_init(&cfg);
   if (!client) {
-    dbg("lofi https: init failed");
+    ::lolog::LoLog::debug("lofi", "lofi https: init failed");
     return r;
   }
   esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -184,7 +259,7 @@ static lofi::HttpResult post_https(const char* url, const char* bearer, const ch
   r.status = esp_http_client_get_status_code(client);
   esp_http_client_cleanup(client);
   r.err = (int)err;
-  if (err != ESP_OK) dbg("lofi https: err=%s", esp_err_to_name(err));
+  if (err != ESP_OK) ::lolog::LoLog::debug("lofi", "lofi https: err=%s", esp_err_to_name(err));
   return r;
 }
 
@@ -377,8 +452,12 @@ HttpResult Lofi::httpPost(const char* url, const char* bearer, const char* body,
                           const char* hv) {
   HttpResult r{0, 0};
   if (!url || !body) return r;
-  if (is_https(url)) return post_https(url, bearer, body, n, hn, hv);
-  return post_plain(url, bearer, body, n, hn, hv);
+  char bearer_norm[200];
+  const char* normalized = normalize_bearer_token(bearer, bearer_norm, sizeof(bearer_norm));
+  if (is_https(url)) r = post_https(url, normalized, body, n, hn, hv);
+  else r = post_plain(url, normalized, body, n, hn, hv);
+  if (r.status == 403) log_curl_replay_forbidden(url, normalized, body, n, hn, hv);
+  return r;
 }
 
 void Lofi::resetHttpTransport() { reset_session(); }
@@ -430,13 +509,13 @@ void Lofi::registerWifiHandlers() {
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
       case ARDUINO_EVENT_WIFI_STA_START:
-        dbg("wifi sta: started");
+        ::lolog::LoLog::debug("lofi", "wifi sta: started");
         break;
       case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-        dbg("wifi sta: associated ch=%u", (unsigned)info.wifi_sta_connected.channel);
+        ::lolog::LoLog::debug("lofi", "wifi sta: associated ch=%u", (unsigned)info.wifi_sta_connected.channel);
         break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-        dbg("wifi sta: got ip %s", WiFi.localIP().toString().c_str());
+        ::lolog::LoLog::debug("lofi", "wifi sta: got ip %s", WiFi.localIP().toString().c_str());
         if (s_connect.pending) {
           s_connect.pending = false;
           s_connect.ok = true;
@@ -445,7 +524,7 @@ void Lofi::registerWifiHandlers() {
         }
         break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-        dbg("wifi sta: disconnected reason=%u", (unsigned)info.wifi_sta_disconnected.reason);
+        ::lolog::LoLog::debug("lofi", "wifi sta: disconnected reason=%u", (unsigned)info.wifi_sta_disconnected.reason);
         if (s_connect.pending && (uint32_t)(millis() - s_connect.t0) > kConnectSettleMs) {
           s_connect.pending = false;
           s_connect.ok = false;
@@ -505,8 +584,8 @@ void Lofi::registerWifiHandlers() {
     uint8_t next = (uint8_t)((idx + 1) % n);
     const char* nssid = s_known[next].ssid;
     const char* pw = s_known[next].psk[0] ? s_known[next].psk : nullptr;
-    dbg("wifi sta: failover reason=%u idx %u -> %u ssid=%.32s", (unsigned)reason, (unsigned)idx,
-        (unsigned)next, nssid);
+    ::lolog::LoLog::debug("lofi", "wifi sta: failover reason=%u idx %u -> %u ssid=%.32s", (unsigned)reason,
+                          (unsigned)idx, (unsigned)next, nssid);
     WiFi.disconnect(false, false);
     WiFi.begin(nssid, pw);
     WiFi.setSleep(WIFI_PS_NONE);
