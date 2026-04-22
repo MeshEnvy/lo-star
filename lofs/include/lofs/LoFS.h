@@ -26,6 +26,7 @@ public:
   static bool remove(const char* filepath);
   static bool rename(const char* oldfilepath, const char* newfilepath);
   static bool writeFileAtomic(const char* filepath, const uint8_t* data, size_t size);
+  static bool readFileAtomic(const char* filepath, uint8_t* out, size_t cap, size_t* out_size);
   static bool rmdir(const char* filepath, bool recursive = false);
   static uint64_t totalBytes(const char* filepath);
   static uint64_t usedBytes(const char* filepath);

@@ -7,6 +7,13 @@
 
 #include <cstring>
 
+#if __has_include(<lolog/LoLog.h>)
+#include <lolog/LoLog.h>
+#define LOFS_LOG_DEBUG(...) ::lolog::LoLog::debug("lofs", __VA_ARGS__)
+#else
+#define LOFS_LOG_DEBUG(...) ((void)0)
+#endif
+
 #if defined(ESP32_PLATFORM)
 #include <freertos/semphr.h>
 static SemaphoreHandle_t s_lofs_mtx;
@@ -334,6 +341,36 @@ bool LoFS::writeFileAtomic(const char* filepath, const uint8_t* data, size_t siz
     (void)LoFS::remove(tmp_path);
     return false;
   }
+  return true;
+}
+
+bool LoFS::readFileAtomic(const char* filepath, uint8_t* out, size_t cap, size_t* out_size) {
+  if (!filepath || !out || cap == 0 || !out_size) return false;
+  *out_size = 0;
+
+  // Guard against FS backends that may return a truthy File for absent paths.
+  if (!LoFS::exists(filepath)) return false;
+
+  File f = LoFS::open(filepath, FILE_O_READ);
+  if (!f) {
+    LOFS_LOG_DEBUG("readFileAtomic: exists but open failed: %s", filepath);
+    return false;
+  }
+
+  // Some backends can return handles to directories via open("r").
+  if (f.isDirectory()) {
+    LOFS_LOG_DEBUG("readFileAtomic: path opened as directory: %s", filepath);
+    f.close();
+    return false;
+  }
+
+  size_t n = f.read(out, cap);
+  f.close();
+
+  // Treat an empty read with a now-absent path as not-found.
+  if (n == 0 && !LoFS::exists(filepath)) return false;
+
+  *out_size = n;
   return true;
 }
 
