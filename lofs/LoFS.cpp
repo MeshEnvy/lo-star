@@ -132,9 +132,18 @@ bool rename_via_tmp(const char* src_v, const char* dst_v) {
   if (!resolve_locked(src_v, &sb, sp, sizeof(sp))) return false;
   if (!resolve_locked(dst_v, &db, dp, sizeof(dp))) return false;
 
+  // Same-backend rename can be done directly and avoids tmp-name growth,
+  // which is important for tight SPIFFS/LittleFS name limits.
+  if (sb == db) {
+    if (db->exists(dp)) {
+      if (!db->remove(dp)) return false;
+    }
+    return db->rename(sp, dp);
+  }
+
   lofs::FsBackend* tb = nullptr;
   char tmp_strip[256];
-  int n = snprintf(tmp_v, sizeof(tmp_v), "%s.lofs-tmp", dst_v);
+  int n = snprintf(tmp_v, sizeof(tmp_v), "%s.t", dst_v);
   if (n <= 0 || (size_t)n >= sizeof(tmp_v)) return false;
   if (!resolve_locked(tmp_v, &tb, tmp_strip, sizeof(tmp_strip))) return false;
   if (tb != db) return false;
@@ -322,7 +331,7 @@ bool LoFS::writeFileAtomic(const char* filepath, const uint8_t* data, size_t siz
   if (n <= 0 || (size_t)n >= sizeof(tmp_path)) return false;
 
   // Best-effort cleanup from any previous interrupted write.
-  (void)LoFS::remove(tmp_path);
+  if (LoFS::exists(tmp_path)) (void)LoFS::remove(tmp_path);
 
   File f = LoFS::open(tmp_path, FILE_O_WRITE);
   if (!f) return false;
