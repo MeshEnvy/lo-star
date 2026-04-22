@@ -44,42 +44,45 @@ bool lodb_fn11_to_uuid(const char s[11], lodb_uuid_t *out)
     return true;
 }
 
-void fill_ns_hex(const std::string &db, const char *table, char ns_out[7])
+void fill_ns_token(const std::string &db, const char *table, char ns_out[7])
 {
-    uint32_t h = 2166136261u;
+    uint64_t h = 14695981039346656037ull;  // FNV-1a 64-bit offset basis
     for (unsigned char c : db) {
         h ^= c;
-        h *= 16777619u;
+        h *= 1099511628211ull;  // FNV-1a 64-bit prime
     }
     h ^= ':';
-    h *= 16777619u;
+    h *= 1099511628211ull;
     for (const char *p = table; *p; ++p) {
         h ^= (unsigned char)*p;
-        h *= 16777619u;
+        h *= 1099511628211ull;
     }
-    snprintf(ns_out, 7, "%06x", (unsigned)(h & 0xffffffu));
+    uint64_t v = h & 0xfffffffffull;  // keep 36 bits => 6 base64url chars
+    for (int i = 5; i >= 0; --i) {
+        ns_out[i] = kB64url[v & 63];
+        v >>= 6;
+    }
+    ns_out[6] = '\0';
 }
 
-void record_file_path(const char *table_path, const char *ns_hex, lodb_uuid_t uuid, char *path, size_t cap)
+void record_file_path(const char *table_path, lodb_uuid_t uuid, char *path, size_t cap)
 {
     char fn11[12];
     lodb_uuid_to_fn11(uuid, fn11);
-    snprintf(path, cap, "%s/%s%s.pr", table_path, ns_hex, fn11);
+    snprintf(path, cap, "%s/%s.pr", table_path, fn11);
 }
 
-bool parse_record_filename(const std::string &filename, const char *ns_hex, lodb_uuid_t *uuid_out)
+bool parse_record_filename(const std::string &filename, lodb_uuid_t *uuid_out)
 {
-    if (filename.size() != 20) return false;
-    if (strncmp(filename.c_str(), ns_hex, 6) != 0) return false;
-    if (filename.compare(17, 3, ".pr") != 0) return false;
-    return lodb_fn11_to_uuid(filename.c_str() + 6, uuid_out);
+    if (filename.size() != 14) return false;
+    if (filename.compare(11, 3, ".pr") != 0) return false;
+    return lodb_fn11_to_uuid(filename.c_str(), uuid_out);
 }
 
-bool record_filename_belongs_table(const std::string &filename, const char *ns_hex)
+bool record_filename_belongs_table(const std::string &filename)
 {
-    if (filename.size() != 20) return false;
-    if (strncmp(filename.c_str(), ns_hex, 6) != 0) return false;
-    return filename.compare(17, 3, ".pr") == 0;
+    lodb_uuid_t dummy;
+    return parse_record_filename(filename, &dummy);
 }
 
 }  // namespace
@@ -94,7 +97,7 @@ void lodb_uuid_to_hex(lodb_uuid_t uuid, char hex_out[17])
     snprintf(hex_out, 17, LODB_UUID_FMT, LODB_UUID_ARGS(uuid));
 }
 
-lodb_uuid_t lodb_new_uuid(const char *str, uint64_t salt)
+static lodb_uuid_t lodb_uuid_from_key(const char *str, uint64_t salt)
 {
     char generated_str[32];
     const char *input_str = str;
@@ -146,6 +149,11 @@ LoDb::LoDb(const char *db_name, const char *mount) : db_name(db_name)
 
 LoDb::~LoDb() {}
 
+lodb_uuid_t LoDb::keyToUuid(const char *key) const
+{
+    return lodb_uuid_from_key(key, 0);
+}
+
 LoDbError LoDb::registerTable(const char *table_name, const pb_msgdesc_t *pb_descriptor, size_t record_size)
 {
     if (!table_name || !pb_descriptor || record_size == 0) {
@@ -156,12 +164,20 @@ LoDbError LoDb::registerTable(const char *table_name, const pb_msgdesc_t *pb_des
     metadata.table_name = table_name;
     metadata.pb_descriptor = pb_descriptor;
     metadata.record_size = record_size;
-    fill_ns_hex(db_name, table_name, metadata.ns_hex);
+    fill_ns_token(db_name, table_name, metadata.ns_token);
 
-    snprintf(metadata.table_path, sizeof(metadata.table_path), "%s", db_path);
+    int n = snprintf(metadata.table_path, sizeof(metadata.table_path), "%s/%s", db_path, metadata.ns_token);
+    if (n <= 0 || (size_t)n >= sizeof(metadata.table_path)) {
+        LODB_LOG_ERROR("Table path overflow: %s", table_name);
+        return LODB_ERR_INVALID;
+    }
+    if (!LoFS::mkdir(metadata.table_path)) {
+        LODB_LOG_DEBUG("LoDB: table dir may already exist: %s", metadata.table_path);
+    }
 
     tables[table_name] = metadata;
-    LODB_LOG_INFO("Registered table: %s at %s", table_name, metadata.table_path);
+    LODB_LOG_INFO("Registered table: %s:%s token=%s at %s", db_name.c_str(), table_name,
+                  metadata.ns_token, metadata.table_path);
     return LODB_OK;
 }
 
@@ -187,14 +203,10 @@ LoDbError LoDb::insert(const char *table_name, lodb_uuid_t uuid, const void *rec
     }
 
     char file_path[192];
-    record_file_path(table->table_path, table->ns_hex, uuid, file_path, sizeof(file_path));
+    record_file_path(table->table_path, uuid, file_path, sizeof(file_path));
 
-    {
-        auto existing = LoFS::open(file_path, FILE_O_READ);
-        if (existing) {
-            existing.close();
-            return LODB_ERR_INVALID;
-        }
+    if (LoFS::exists(file_path)) {
+        return LODB_ERR_INVALID;
     }
 
     constexpr size_t kBufSize = 2048;
@@ -207,7 +219,6 @@ LoDbError LoDb::insert(const char *table_name, lodb_uuid_t uuid, const void *rec
     }
 
     size_t encoded_size = stream.bytes_written;
-
     if (!LoFS::writeFileAtomic(file_path, buffer.get(), encoded_size)) {
         LODB_LOG_ERROR("Failed atomic write for insert: %s", file_path);
         return LODB_ERR_IO;
@@ -215,7 +226,13 @@ LoDbError LoDb::insert(const char *table_name, lodb_uuid_t uuid, const void *rec
     return LODB_OK;
 }
 
-LoDbError LoDb::get(const char *table_name, lodb_uuid_t uuid, void *record_out)
+LoDbError LoDb::insert(const char *table_name, const char *key, const void *record)
+{
+    if (!key) return LODB_ERR_INVALID;
+    return insert(table_name, keyToUuid(key), record);
+}
+
+LoDbError LoDb::get(const char *table_name, lodb_uuid_t uuid, void *record_out, const char *debug_key)
 {
     if (!table_name || !record_out) {
         return LODB_ERR_INVALID;
@@ -226,26 +243,36 @@ LoDbError LoDb::get(const char *table_name, lodb_uuid_t uuid, void *record_out)
         return LODB_ERR_INVALID;
     }
 
+    char fn11[12];
+    lodb_uuid_to_fn11(uuid, fn11);
     char file_path[192];
-    record_file_path(table->table_path, table->ns_hex, uuid, file_path, sizeof(file_path));
-    LODB_LOG_DEBUG("file_path: %s", file_path);
+    record_file_path(table->table_path, uuid, file_path, sizeof(file_path));
+    if (debug_key && debug_key[0]) {
+        LODB_LOG_DEBUG("get db=%s table=%s key=%s token=%s rec=%s path=%s", db_name.c_str(),
+                       table->table_name.c_str(), debug_key, table->ns_token, fn11, file_path);
+    } else {
+        LODB_LOG_DEBUG("get db=%s table=%s token=%s rec=%s path=%s", db_name.c_str(), table->table_name.c_str(),
+                       table->ns_token, fn11, file_path);
+    }
 
     constexpr size_t kBufSize = 2048;
     std::unique_ptr<uint8_t[]> buffer(new uint8_t[kBufSize]);
     size_t file_size = 0;
 
-    auto file = LoFS::open(file_path, FILE_O_READ);
-    if (!file) {
+    if (!LoFS::readFileAtomic(file_path, buffer.get(), kBufSize, &file_size)) {
         return LODB_ERR_NOT_FOUND;
     }
-
-    file_size = file.read(buffer.get(), kBufSize);
-    file.close();
-
     if (file_size == 0) {
         LODB_LOG_ERROR("Record file is empty: " LODB_UUID_FMT, LODB_UUID_ARGS(uuid));
-        (void)LoFS::remove(file_path);
-        LODB_LOG_WARN("Removed empty record file: %s", file_path);
+        if (LoFS::exists(file_path)) {
+            if (LoFS::remove(file_path)) {
+                LODB_LOG_WARN("Removed empty record file: %s", file_path);
+            } else {
+                LODB_LOG_WARN("Failed to remove empty record file: %s", file_path);
+            }
+        } else {
+            LODB_LOG_DEBUG("Empty-record path already absent: %s", file_path);
+        }
         return LODB_ERR_IO;
     }
 
@@ -260,6 +287,12 @@ LoDbError LoDb::get(const char *table_name, lodb_uuid_t uuid, void *record_out)
     return LODB_OK;
 }
 
+LoDbError LoDb::get(const char *table_name, const char *key, void *record_out)
+{
+    if (!key) return LODB_ERR_INVALID;
+    return get(table_name, keyToUuid(key), record_out, key);
+}
+
 LoDbError LoDb::update(const char *table_name, lodb_uuid_t uuid, const void *record)
 {
     if (!table_name || !record) {
@@ -272,14 +305,10 @@ LoDbError LoDb::update(const char *table_name, lodb_uuid_t uuid, const void *rec
     }
 
     char file_path[192];
-    record_file_path(table->table_path, table->ns_hex, uuid, file_path, sizeof(file_path));
+    record_file_path(table->table_path, uuid, file_path, sizeof(file_path));
 
-    {
-        auto file = LoFS::open(file_path, FILE_O_READ);
-        if (!file) {
-            return LODB_ERR_NOT_FOUND;
-        }
-        file.close();
+    if (!LoFS::exists(file_path)) {
+        return LODB_ERR_NOT_FOUND;
     }
 
     constexpr size_t kBufSize = 2048;
@@ -292,7 +321,6 @@ LoDbError LoDb::update(const char *table_name, lodb_uuid_t uuid, const void *rec
     }
 
     size_t encoded_size = stream.bytes_written;
-
     if (!LoFS::writeFileAtomic(file_path, buffer.get(), encoded_size)) {
         LODB_LOG_ERROR("Failed atomic write for update: %s", file_path);
         return LODB_ERR_IO;
@@ -300,6 +328,12 @@ LoDbError LoDb::update(const char *table_name, lodb_uuid_t uuid, const void *rec
 
     LODB_LOG_INFO("Updated record: " LODB_UUID_FMT, LODB_UUID_ARGS(uuid));
     return LODB_OK;
+}
+
+LoDbError LoDb::update(const char *table_name, const char *key, const void *record)
+{
+    if (!key) return LODB_ERR_INVALID;
+    return update(table_name, keyToUuid(key), record);
 }
 
 LoDbError LoDb::deleteRecord(const char *table_name, lodb_uuid_t uuid)
@@ -314,7 +348,7 @@ LoDbError LoDb::deleteRecord(const char *table_name, lodb_uuid_t uuid)
     }
 
     char file_path[192];
-    record_file_path(table->table_path, table->ns_hex, uuid, file_path, sizeof(file_path));
+    record_file_path(table->table_path, uuid, file_path, sizeof(file_path));
 
     if (LoFS::remove(file_path)) {
         LODB_LOG_DEBUG("Deleted record: " LODB_UUID_FMT, LODB_UUID_ARGS(uuid));
@@ -322,6 +356,12 @@ LoDbError LoDb::deleteRecord(const char *table_name, lodb_uuid_t uuid)
     }
     LODB_LOG_WARN("Failed to delete record (may not exist): " LODB_UUID_FMT, LODB_UUID_ARGS(uuid));
     return LODB_ERR_NOT_FOUND;
+}
+
+LoDbError LoDb::deleteRecord(const char *table_name, const char *key)
+{
+    if (!key) return LODB_ERR_INVALID;
+    return deleteRecord(table_name, keyToUuid(key));
 }
 
 std::vector<void *> LoDb::select(const char *table_name, LoDbFilter filter, LoDbComparator comparator, size_t limit)
@@ -369,7 +409,7 @@ std::vector<void *> LoDb::select(const char *table_name, LoDbFilter filter, LoDb
         std::string filename = (lastSlash != std::string::npos) ? pathStr.substr(lastSlash + 1) : pathStr;
 
         lodb_uuid_t uuid;
-        if (!parse_record_filename(filename, table->ns_hex, &uuid)) {
+        if (!parse_record_filename(filename, &uuid)) {
             LODB_LOG_DEBUG("Skipped non-record file: %s", filename.c_str());
             continue;
         }
@@ -474,7 +514,7 @@ int LoDb::count(const char *table_name, LoDbFilter filter)
             size_t lastSlash = pathStr.rfind('/');
             std::string filename = (lastSlash != std::string::npos) ? pathStr.substr(lastSlash + 1) : pathStr;
 
-            if (record_filename_belongs_table(filename, table->ns_hex)) {
+            if (record_filename_belongs_table(filename)) {
                 cnt++;
             }
         }
@@ -535,7 +575,7 @@ LoDbError LoDb::truncate(const char *table_name)
         size_t lastSlash = pathStr.rfind('/');
         std::string filename = (lastSlash != std::string::npos) ? pathStr.substr(lastSlash + 1) : pathStr;
 
-        if (!record_filename_belongs_table(filename, table->ns_hex)) {
+        if (!record_filename_belongs_table(filename)) {
             continue;
         }
 
@@ -578,3 +618,64 @@ LoDbError LoDb::drop(const char *table_name)
     LODB_LOG_INFO("Dropped table: %s", table_name);
     return LODB_OK;
 }
+
+#if defined(LODB_TEST)
+#include "../losettings/losettings.pb.h"
+
+bool lodb_run_selftest(const char *mount)
+{
+    static bool ran = false;
+    if (ran) return true;
+    ran = true;
+
+    bool ok = true;
+    auto expect = [&](bool cond, const char *msg) {
+        if (!cond) {
+            LODB_LOG_ERROR("LoDB selftest FAIL: %s", msg);
+            ok = false;
+        }
+    };
+
+    LoDb db("lodb_selftest", mount);
+    expect(db.registerTable("kv", &LoSettingsKv_msg, sizeof(LoSettingsKv)) == LODB_OK, "register table");
+
+    LoSettingsKv rec = LoSettingsKv_init_zero;
+    strncpy(rec.key, "alpha", sizeof(rec.key) - 1);
+    rec.kind = 5;  // string
+    const char *v1 = "one";
+    rec.data.size = (pb_size_t)strlen(v1);
+    memcpy(rec.data.bytes, v1, rec.data.size);
+    expect(db.insert("kv", "alpha", &rec) == LODB_OK, "insert alpha");
+
+    LoSettingsKv out = LoSettingsKv_init_zero;
+    expect(db.get("kv", "alpha", &out) == LODB_OK, "get alpha after insert");
+    expect(out.kind == 5 && out.data.size == 3 && memcmp(out.data.bytes, "one", 3) == 0, "alpha value one");
+
+    const char *v2 = "two";
+    rec.data.size = (pb_size_t)strlen(v2);
+    memcpy(rec.data.bytes, v2, rec.data.size);
+    expect(db.update("kv", "alpha", &rec) == LODB_OK, "update alpha");
+    memset(&out, 0, sizeof(out));
+    expect(db.get("kv", "alpha", &out) == LODB_OK, "get alpha after update");
+    expect(out.data.size == 3 && memcmp(out.data.bytes, "two", 3) == 0, "alpha value two");
+
+    LoSettingsKv brec = LoSettingsKv_init_zero;
+    strncpy(brec.key, "blob", sizeof(brec.key) - 1);
+    brec.kind = 6;  // bytes
+    brec.data.size = 32;
+    for (size_t i = 0; i < brec.data.size; i++) brec.data.bytes[i] = (uint8_t)(i ^ 0x5a);
+    expect(db.insert("kv", "blob", &brec) == LODB_OK, "insert blob");
+    memset(&out, 0, sizeof(out));
+    expect(db.get("kv", "blob", &out) == LODB_OK, "get blob");
+    expect(out.kind == 6 && out.data.size == 32, "blob metadata");
+    expect(memcmp(out.data.bytes, brec.data.bytes, 32) == 0, "blob payload");
+
+    expect(db.deleteRecord("kv", "alpha") == LODB_OK, "delete alpha");
+    memset(&out, 0, sizeof(out));
+    expect(db.get("kv", "alpha", &out) == LODB_ERR_NOT_FOUND, "alpha missing after delete");
+
+    (void)db.truncate("kv");
+    LODB_LOG_INFO("LoDB selftest %s", ok ? "PASS" : "FAIL");
+    return ok;
+}
+#endif

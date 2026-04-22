@@ -17,10 +17,11 @@
 /**
  * LoDB - Synchronous Protobuf Database
  *
- * Logical paths are `<mount>/l/<file>.pr` (e.g. mount `/__ext__`, `/__int__`). LoFS strips the
+ * Logical paths are `<mount>/l/<6-b64url>/<file>.pr` (e.g. mount `/__ext__`, `/__int__`). LoFS strips the
  * virtual mount prefix before SPIFFS/LittleFS; only that on-device path must respect the backend
- * name limit (e.g. SPIFFS 31 chars + NUL). Filenames are `{6-hex}{11-base64url}.pr` from
- * FNV-1a(db,table) + uuid so the stripped path stays short; mount prefixes are unchanged.
+ * name limit (e.g. SPIFFS 31 chars + NUL). The table directory is a fixed-width 6-char base64url
+ * token from FNV-1a(db,table), and record filenames are `{11-base64url}.pr`; mount prefixes are
+ * unchanged.
  */
 
 #ifndef LODB_VERSION
@@ -74,10 +75,13 @@ typedef std::function<bool(const void *)> LoDbFilter;
 typedef std::function<int(const void *, const void *)> LoDbComparator;
 
 void lodb_uuid_to_hex(lodb_uuid_t uuid, char hex_out[17]);
-lodb_uuid_t lodb_new_uuid(const char *str, uint64_t salt);
 
 /** Weak by default (`millis()`); override with a strong definition for wall time. */
 uint32_t lodb_now_ms(void);
+
+#if defined(LODB_TEST)
+bool lodb_run_selftest(const char *mount = "/__ext__");
+#endif
 
 class LoDb
 {
@@ -88,9 +92,13 @@ class LoDb
 
     LoDbError registerTable(const char *table_name, const pb_msgdesc_t *pb_descriptor, size_t record_size);
     LoDbError insert(const char *table_name, lodb_uuid_t uuid, const void *record);
-    LoDbError get(const char *table_name, lodb_uuid_t uuid, void *record_out);
+    LoDbError insert(const char *table_name, const char *key, const void *record);
+    LoDbError get(const char *table_name, lodb_uuid_t uuid, void *record_out, const char *debug_key = nullptr);
+    LoDbError get(const char *table_name, const char *key, void *record_out);
     LoDbError update(const char *table_name, lodb_uuid_t uuid, const void *record);
+    LoDbError update(const char *table_name, const char *key, const void *record);
     LoDbError deleteRecord(const char *table_name, lodb_uuid_t uuid);
+    LoDbError deleteRecord(const char *table_name, const char *key);
     std::vector<void *> select(const char *table_name, LoDbFilter filter = LoDbFilter(),
                                LoDbComparator comparator = LoDbComparator(), size_t limit = 0);
     static void freeRecords(std::vector<void *> &records);
@@ -104,12 +112,13 @@ class LoDb
         const pb_msgdesc_t *pb_descriptor;
         size_t record_size;
         char table_path[160];
-        char ns_hex[7]; /* 6 lowercase hex + NUL: FNV-1a(db_name + ':' + table_name) & 0xffffff */
+        char ns_token[7]; /* 6 base64url + NUL from FNV-1a(db_name + ':' + table_name) */
     };
 
     std::string db_name;
     char db_path[128];
     std::map<std::string, TableMetadata> tables;
 
+    lodb_uuid_t keyToUuid(const char *key) const;
     TableMetadata *getTable(const char *table_name);
 };
