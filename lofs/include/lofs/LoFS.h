@@ -3,12 +3,21 @@
 #include <lofs/FsBackend.h>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 
 #define LOFS_VERSION "0.3.0-meshcore"
 
 class LoFS {
 public:
+  struct FSysBinding {
+    const char* prefix;
+    lofs::FSys* fs;
+  };
+
   static bool mount(const char* prefix, lofs::FsBackend* backend);
+  /** Mount host filesystem handles by virtual prefix (currently supports `/__int__`). */
+  static bool mount(const char* prefix, lofs::FSys* fs);
+  static bool mount(std::initializer_list<FSysBinding> bindings);
   static bool unmount(const char* prefix);
   static lofs::FsBackend* resolveBackend(const char* virtual_path, char* stripped_out, size_t stripped_cap);
 

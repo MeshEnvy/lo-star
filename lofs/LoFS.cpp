@@ -204,6 +204,25 @@ bool LoFS::unmount(const char* prefix) {
   return false;
 }
 
+bool LoFS::mount(const char* prefix, lofs::FSys* fs) {
+  if (!prefix || !prefix[0]) return false;
+  if (strcmp(prefix, "/__int__") == 0) {
+    auto& inb = lofs::InternalFlashBackend::instance();
+    inb.bindFs(fs);
+    return mount("/__int__", &inb);
+  }
+  LOFS_LOG_DEBUG("mount(FSys): unsupported mount prefix: %s", prefix);
+  return false;
+}
+
+bool LoFS::mount(std::initializer_list<FSysBinding> bindings) {
+  bool ok = true;
+  for (const auto& b : bindings) {
+    ok = mount(b.prefix, b.fs) && ok;
+  }
+  return ok;
+}
+
 lofs::FsBackend* LoFS::resolveBackend(const char* virtual_path, char* stripped_out, size_t stripped_cap) {
   lofs::FsBackend* b = nullptr;
   lofs_lock();
@@ -213,7 +232,7 @@ lofs::FsBackend* LoFS::resolveBackend(const char* virtual_path, char* stripped_o
 }
 
 void LoFS::bindInternalFs(lofs::FSys* fs) {
-  lofs::InternalFlashBackend::instance().bindFs(fs);
+  (void)mount("/__int__", fs);
 }
 
 void LoFS::mountDefaults() {
