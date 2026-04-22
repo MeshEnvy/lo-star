@@ -44,10 +44,19 @@ bool key_is_sensitive(const char* key) {
          strstr(low, "auth");
 }
 
+bool should_redact_sensitive(const char* key) {
+  if (!key_is_sensitive(key)) return false;
+#if __has_include(<lolog/LoLog.h>)
+  return !::lolog::LoLog::isVerbose();
+#else
+  return true;
+#endif
+}
+
 void format_value_preview(const LoSettingsKv& rec, const char* key, char* out, size_t out_cap) {
   if (!out || out_cap < 2) return;
   out[0] = '\0';
-  if (key_is_sensitive(key)) {
+  if (should_redact_sensitive(key)) {
     snprintf(out, out_cap, "(redacted)");
     return;
   }

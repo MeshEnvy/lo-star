@@ -15,6 +15,16 @@
 
 namespace losettings {
 
+namespace {
+bool should_redact_private_debug() {
+#if __has_include(<lolog/LoLog.h>)
+  return !::lolog::LoLog::isVerbose();
+#else
+  return true;
+#endif
+}
+}  // namespace
+
 const ConfigEntry* ConfigRegistry::findKey(const char* key) const {
   if (!key || !_entries) return nullptr;
   for (int i = 0; i < _n; i++) {
@@ -65,7 +75,7 @@ const ConfigEntry* ConfigHub::lookup(const char* full_key, char* ns_out, size_t 
 static void append_effective_line(lomessage::Buffer& out, const char* full_key, const ConfigEntry* e,
                                   LoSettings& st) {
   out.appendf("%s = ", full_key);
-  if (e->is_private) {
+  if (e->is_private && should_redact_private_debug()) {
     out.append("(redacted)");
   } else {
     switch (e->kind) {
@@ -87,7 +97,7 @@ static void append_effective_line(lomessage::Buffer& out, const char* full_key, 
     }
   }
   out.appendf("  (default ");
-  if (e->is_private) {
+  if (e->is_private && should_redact_private_debug()) {
     out.append("(redacted)");
   } else {
     switch (e->kind) {
@@ -130,7 +140,7 @@ void ConfigHub::formatGet(const char* full_key, lomessage::Buffer& out) const {
     return;
   }
   LoSettings st(ns);
-  if (e->is_private) {
+  if (e->is_private && should_redact_private_debug()) {
     out.append("(redacted)\n");
     return;
   }
@@ -247,7 +257,7 @@ bool ConfigHub::setFromString(const char* full_key, const char* value, char* err
     if (err && err_cap) snprintf(err, err_cap, "save failed");
     return false;
   }
-  if (e->is_private) {
+  if (e->is_private && should_redact_private_debug()) {
     LOSETTINGS_LOG_DEBUG("config set applied: key=%s value=(redacted)", full_key);
   } else {
     LOSETTINGS_LOG_DEBUG("config set applied: key=%s value=\"%.96s\"", full_key, value);
