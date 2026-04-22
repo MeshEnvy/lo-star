@@ -6,6 +6,12 @@
 #include <cstdio>
 #include <cstring>
 #include <strings.h>
+#if __has_include(<lolog/LoLog.h>)
+#include <lolog/LoLog.h>
+#define LOSETTINGS_LOG_DEBUG(...) ::lolog::LoLog::debug("losettings", __VA_ARGS__)
+#else
+#define LOSETTINGS_LOG_DEBUG(...) ((void)0)
+#endif
 
 namespace losettings {
 
@@ -240,6 +246,11 @@ bool ConfigHub::setFromString(const char* full_key, const char* value, char* err
   if (!ok) {
     if (err && err_cap) snprintf(err, err_cap, "save failed");
     return false;
+  }
+  if (e->is_private) {
+    LOSETTINGS_LOG_DEBUG("config set applied: key=%s value=(redacted)", full_key);
+  } else {
+    LOSETTINGS_LOG_DEBUG("config set applied: key=%s value=\"%.96s\"", full_key, value);
   }
   if (e->on_change) e->on_change(e->on_change_ctx);
   return true;
