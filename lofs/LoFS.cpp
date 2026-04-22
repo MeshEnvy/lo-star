@@ -308,6 +308,35 @@ bool LoFS::rename(const char* oldfilepath, const char* newfilepath) {
   return ok;
 }
 
+bool LoFS::writeFileAtomic(const char* filepath, const uint8_t* data, size_t size) {
+  if (!filepath || !data || size == 0) return false;
+  char tmp_path[280];
+  int n = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", filepath);
+  if (n <= 0 || (size_t)n >= sizeof(tmp_path)) return false;
+
+  // Best-effort cleanup from any previous interrupted write.
+  (void)LoFS::remove(tmp_path);
+
+  File f = LoFS::open(tmp_path, FILE_O_WRITE);
+  if (!f) return false;
+
+  size_t written = f.write(data, size);
+  if (written != size) {
+    f.close();
+    (void)LoFS::remove(tmp_path);
+    return false;
+  }
+
+  f.flush();
+  f.close();
+
+  if (!LoFS::rename(tmp_path, filepath)) {
+    (void)LoFS::remove(tmp_path);
+    return false;
+  }
+  return true;
+}
+
 bool LoFS::rmdir(const char* filepath, bool recursive) {
   char virt[256];
   if (!normalize_virtual(filepath, virt, sizeof(virt))) return false;

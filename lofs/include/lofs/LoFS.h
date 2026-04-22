@@ -1,6 +1,8 @@
 #pragma once
 
 #include <lofs/FsBackend.h>
+#include <cstddef>
+#include <cstdint>
 
 #define LOFS_VERSION "0.3.0-meshcore"
 
@@ -23,6 +25,7 @@ public:
   static bool mkdir(const char* filepath);
   static bool remove(const char* filepath);
   static bool rename(const char* oldfilepath, const char* newfilepath);
+  static bool writeFileAtomic(const char* filepath, const uint8_t* data, size_t size);
   static bool rmdir(const char* filepath, bool recursive = false);
   static uint64_t totalBytes(const char* filepath);
   static uint64_t usedBytes(const char* filepath);
