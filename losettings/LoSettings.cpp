@@ -3,7 +3,16 @@
 #include "losettings.pb.h"
 
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
+#include <cstdio>
+
+#if __has_include(<lolog/LoLog.h>)
+#include <lolog/LoLog.h>
+#define LOSETTINGS_LOG_DEBUG(...) ::lolog::LoLog::debug("losettings", __VA_ARGS__)
+#else
+#define LOSETTINGS_LOG_DEBUG(...) ((void)0)
+#endif
 
 namespace losettings {
 
@@ -20,15 +29,95 @@ enum Kind : uint32_t {
   KIND_BYTES = 6,
 };
 
+bool key_is_sensitive(const char* key) {
+  if (!key) return false;
+  char low[40];
+  size_t n = strlen(key);
+  if (n >= sizeof(low)) n = sizeof(low) - 1;
+  for (size_t i = 0; i < n; i++) low[i] = (char)tolower((unsigned char)key[i]);
+  low[n] = '\0';
+  return strstr(low, "token") || strstr(low, "password") || strstr(low, "psk") || strstr(low, "secret") ||
+         strstr(low, "auth");
+}
+
+void format_value_preview(const LoSettingsKv& rec, const char* key, char* out, size_t out_cap) {
+  if (!out || out_cap < 2) return;
+  out[0] = '\0';
+  if (key_is_sensitive(key)) {
+    snprintf(out, out_cap, "(redacted)");
+    return;
+  }
+  switch (rec.kind) {
+    case KIND_BOOL:
+      snprintf(out, out_cap, "%s", (rec.data.size >= 1 && rec.data.bytes[0]) ? "true" : "false");
+      return;
+    case KIND_INT32: {
+      if (rec.data.size < 4) {
+        snprintf(out, out_cap, "(bad-int32)");
+        return;
+      }
+      int32_t v = 0;
+      memcpy(&v, rec.data.bytes, 4);
+      snprintf(out, out_cap, "%ld", (long)v);
+      return;
+    }
+    case KIND_UINT32: {
+      if (rec.data.size < 4) {
+        snprintf(out, out_cap, "(bad-uint32)");
+        return;
+      }
+      uint32_t v = 0;
+      memcpy(&v, rec.data.bytes, 4);
+      snprintf(out, out_cap, "%lu", (unsigned long)v);
+      return;
+    }
+    case KIND_FLOAT: {
+      if (rec.data.size < 4) {
+        snprintf(out, out_cap, "(bad-float)");
+        return;
+      }
+      float v = 0.0f;
+      memcpy(&v, rec.data.bytes, 4);
+      snprintf(out, out_cap, "%.3f", (double)v);
+      return;
+    }
+    case KIND_STRING: {
+      size_t n = rec.data.size;
+      if (n > 96) n = 96;
+      if (n > out_cap - 1) n = out_cap - 1;
+      memcpy(out, rec.data.bytes, n);
+      out[n] = '\0';
+      return;
+    }
+    case KIND_BYTES:
+      snprintf(out, out_cap, "(bytes:%u)", (unsigned)rec.data.size);
+      return;
+    default:
+      snprintf(out, out_cap, "(kind:%lu size:%u)", (unsigned long)rec.kind, (unsigned)rec.data.size);
+      return;
+  }
+}
+
 bool load(LoDb& db, const char* key, LoSettingsKv& out) {
   if (!key) return false;
-  return db.get(kTable, lodb_new_uuid(key, 0), &out) == LODB_OK;
+  bool ok = db.get(kTable, key, &out) == LODB_OK;
+  if (ok) {
+    char preview[128];
+    format_value_preview(out, key, preview, sizeof(preview));
+    LOSETTINGS_LOG_DEBUG("read table=%s key=%s value=%s", kTable, key, preview);
+  }
+  return ok;
 }
 
 bool save(LoDb& db, const char* key, const LoSettingsKv& rec) {
-  lodb_uuid_t id = lodb_new_uuid(key, 0);
-  if (db.update(kTable, id, &rec) == LODB_OK) return true;
-  return db.insert(kTable, id, &rec) == LODB_OK;
+  bool ok = db.update(kTable, key, &rec) == LODB_OK;
+  if (!ok) ok = db.insert(kTable, key, &rec) == LODB_OK;
+  if (ok) {
+    char preview[128];
+    format_value_preview(rec, key, preview, sizeof(preview));
+    LOSETTINGS_LOG_DEBUG("write table=%s key=%s value=%s", kTable, key, preview);
+  }
+  return ok;
 }
 
 void fill_base(LoSettingsKv& rec, const char* key, uint32_t kind) {
@@ -70,7 +159,7 @@ bool LoSettings::has(const char* key) {
 bool LoSettings::remove(const char* key) {
   if (!valid_key(key)) return false;
   ensure_registered();
-  return _db.deleteRecord(kTable, lodb_new_uuid(key, 0)) == LODB_OK;
+  return _db.deleteRecord(kTable, key) == LODB_OK;
 }
 
 bool LoSettings::clear() {
