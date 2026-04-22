@@ -9,6 +9,11 @@
 #include <string>
 #include <vector>
 
+#if !defined(PB_FIELD_32BIT) || (PB_FIELD_32BIT != 1)
+#pragma message("lo-star requires PB_FIELD_32BIT=1 for nanopb ABI compatibility")
+#error "Define PB_FIELD_32BIT=1 for all translation units (including nanopb sources)"
+#endif
+
 /**
  * LoDB - Synchronous Protobuf Database
  *
