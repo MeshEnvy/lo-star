@@ -27,6 +27,16 @@ public:
   Command* addWithArgs(const char* path, Handler handler, const ArgSpec* specs, int n_specs,
                        const char* hint = nullptr, const char* brief = nullptr, const char* details = nullptr);
 
+  /**
+   * Attach a `Guard` to the command at @p dotted_path (e.g. "wifi.scan"). Commands with a guard
+   * are both hidden from help and rejected at dispatch when the guard predicate returns false
+   * for the caller. Returns true on success; false if path is unknown.
+   */
+  bool setGuardFor(const char* dotted_path, Guard guard);
+
+  /** Same as setGuardFor but accepts a pre-resolved Command pointer (from add/addWithArgs). */
+  static void setGuard(Command* cmd, Guard guard);
+
   /** True if @p cmd starts with @ref rootName followed by '\0', whitespace, or '?'. */
   bool matchesRoot(const char* cmd) const;
 
@@ -34,8 +44,12 @@ public:
   void dispatch(const char* input_after_root, lomessage::Buffer& out, void* app_ctx);
 
   /** One help line per leaf: "<root> <path> [usage]  (hint) - <brief>". @p sub_path is space-separated segments
-   *  under root (e.g. "wifi") or nullptr for all commands. */
-  void formatHelp(lomessage::Buffer& out, const char* sub_path = nullptr) const;
+   *  under root (e.g. "wifi") or nullptr for all commands. Commands whose guard rejects @p app_ctx
+   *  (when non-null) are skipped; a group becomes hidden when every descendant is hidden. */
+  void formatHelp(lomessage::Buffer& out, const char* sub_path = nullptr, void* app_ctx = nullptr) const;
+
+  /** True if any descendant is visible to @p app_ctx. Guard-less engines are always visible. */
+  bool anyVisible(void* app_ctx) const;
 
   const char* rootName() const { return _root.name; }
 

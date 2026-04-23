@@ -28,8 +28,9 @@ public:
    */
   bool dispatch(const char* command, lomessage::Buffer& out, void* app_ctx);
 
-  /** One line per root (brief) plus each engine's flat help. */
-  void formatGlobalHelp(lomessage::Buffer& out) const;
+  /** One line per root (brief) plus each engine's flat help. Engines with no visible commands
+   *  under @p app_ctx are hidden entirely (root line + sub-help both suppressed). */
+  void formatGlobalHelp(lomessage::Buffer& out, void* app_ctx = nullptr) const;
 
 private:
   Engine* _engines[kMaxEngines];

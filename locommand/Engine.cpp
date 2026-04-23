@@ -51,7 +51,6 @@ Command* find_child(Command* parent, const char* name) {
   return nullptr;
 }
 
-/** Trim leading spaces in-place; return pointer into @p s. */
 char* trim_left(char* s) {
   if (!s) return s;
   while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
@@ -66,7 +65,6 @@ void trim_right(char* s) {
   }
 }
 
-/** First token in @p s (mutable); null-terminates token; returns start of token. @p rest set to byte after token. */
 char* pop_token(char* s, char** rest) {
   char* p = trim_left(s);
   *rest = p;
@@ -81,10 +79,27 @@ char* pop_token(char* s, char** rest) {
   return start;
 }
 
+/**
+ * Visibility: a leaf is visible if it has no guard, or its guard permits @p app_ctx. A group
+ * is visible if any of its descendants is visible. A guard-less tree is always visible.
+ */
+bool is_visible(const Command* c, void* app_ctx) {
+  if (!c) return false;
+  if (c->handler && !c->first_child) {
+    return c->guard ? c->guard(app_ctx) : true;
+  }
+  if (c->guard && !c->guard(app_ctx)) return false;
+  for (Command* ch = c->first_child; ch; ch = ch->next_sibling) {
+    if (is_visible(ch, app_ctx)) return true;
+  }
+  return false;
+}
+
 void format_help_recursive(const char* root_name, const Command* parent, const char* prefix,
-                           lomessage::Buffer& out) {
+                           lomessage::Buffer& out, void* app_ctx) {
   for (Command* c = parent->first_child; c; c = c->next_sibling) {
     if (c->handler && !c->first_child) {
+      if (!is_visible(c, app_ctx)) continue;
       out.appendf("%s ", root_name);
       if (prefix && prefix[0] != '\0') out.append(prefix);
       out.append(c->name);
@@ -93,13 +108,14 @@ void format_help_recursive(const char* root_name, const Command* parent, const c
       if (c->brief && c->brief[0] != '\0') out.appendf(" - %s", c->brief);
       out.append("\n");
     } else if (!c->handler && c->first_child) {
+      if (!is_visible(c, app_ctx)) continue;
       char next[120];
       if (prefix && prefix[0] != '\0') {
         snprintf(next, sizeof(next), "%s%s ", prefix, c->name);
       } else {
         snprintf(next, sizeof(next), "%s ", c->name);
       }
-      format_help_recursive(root_name, c, next, out);
+      format_help_recursive(root_name, c, next, out, app_ctx);
     }
   }
 }
@@ -133,7 +149,14 @@ const Command* find_node(const Command* cur, const char** tokens, int ntok, int 
   return nullptr;
 }
 
-/** Parse @p sub into at most @p max_tok tokens; pointers into @p work (strtok_r mutates). */
+Command* find_node_mut(Command* cur, const char** tokens, int ntok, int idx) {
+  if (idx == ntok) return cur;
+  for (Command* c = cur->first_child; c; c = c->next_sibling) {
+    if (strcmp(c->name, tokens[idx]) == 0) return find_node_mut(c, tokens, ntok, idx + 1);
+  }
+  return nullptr;
+}
+
 int tokenize_sub_path(char* work, const char** tokens, int max_tok) {
   int n = 0;
   char* save = nullptr;
@@ -272,6 +295,24 @@ Command* Engine::addWithArgs(const char* path, Handler handler, const ArgSpec* s
   return leaf;
 }
 
+void Engine::setGuard(Command* cmd, Guard guard) {
+  if (cmd) cmd->guard = guard;
+}
+
+bool Engine::setGuardFor(const char* dotted_path, Guard guard) {
+  if (!dotted_path || !dotted_path[0]) return false;
+  char work[128];
+  strncpy(work, dotted_path, sizeof(work) - 1);
+  work[sizeof(work) - 1] = '\0';
+  const char* tokens[16];
+  int n = tokenize_sub_path(work, tokens, 16);
+  if (n == 0) return false;
+  Command* node = find_node_mut(&_root, tokens, n, 0);
+  if (!node) return false;
+  node->guard = guard;
+  return true;
+}
+
 bool Engine::matchesRoot(const char* cmd) const {
   if (!cmd || !_root.name) return false;
   size_t rn = strlen(_root.name);
@@ -280,9 +321,13 @@ bool Engine::matchesRoot(const char* cmd) const {
   return cmd[rn] == '\0' || c == '?' || isspace(c) != 0;
 }
 
-void Engine::formatHelp(lomessage::Buffer& out, const char* sub_path) const {
+bool Engine::anyVisible(void* app_ctx) const {
+  return is_visible(&_root, app_ctx);
+}
+
+void Engine::formatHelp(lomessage::Buffer& out, const char* sub_path, void* app_ctx) const {
   if (!sub_path || sub_path[0] == '\0') {
-    format_help_recursive(_root.name, &_root, "", out);
+    format_help_recursive(_root.name, &_root, "", out, app_ctx);
     return;
   }
 
@@ -294,14 +339,14 @@ void Engine::formatHelp(lomessage::Buffer& out, const char* sub_path) const {
   const char* tokens[16];
   int n = tokenize_sub_path(w, tokens, 16);
   if (n == 0) {
-    format_help_recursive(_root.name, &_root, "", out);
+    format_help_recursive(_root.name, &_root, "", out, app_ctx);
     return;
   }
 
   const Command* node = find_node(&_root, tokens, n, 0);
-  if (!node) {
+  if (!node || !is_visible(node, app_ctx)) {
     out.appendf("Unknown help topic\n");
-    format_help_recursive(_root.name, &_root, "", out);
+    format_help_recursive(_root.name, &_root, "", out, app_ctx);
     return;
   }
 
@@ -335,11 +380,10 @@ void Engine::formatHelp(lomessage::Buffer& out, const char* sub_path) const {
     prefix[pos++] = ' ';
     prefix[pos] = '\0';
   }
-  format_help_recursive(_root.name, node, prefix, out);
+  format_help_recursive(_root.name, node, prefix, out, app_ctx);
 }
 
 void Engine::dispatch(const char* input_after_root, lomessage::Buffer& out, void* app_ctx) {
-  // Dispatch is serialized on the single loop task; keep large scratch off the stack.
   static char scratch[512];
   if (!input_after_root) input_after_root = "";
   strncpy(scratch, input_after_root, sizeof(scratch) - 1);
@@ -349,14 +393,14 @@ void Engine::dispatch(const char* input_after_root, lomessage::Buffer& out, void
   char* p = scratch;
 
   if (*p == '\0' || strcmp(p, "help") == 0 || strcmp(p, "?") == 0) {
-    formatHelp(out, nullptr);
+    formatHelp(out, nullptr, app_ctx);
     return;
   }
 
   if (strncmp(p, "help ", 5) == 0) {
     char* sub = trim_left(p + 5);
     trim_right(sub);
-    formatHelp(out, sub[0] != '\0' ? sub : nullptr);
+    formatHelp(out, sub[0] != '\0' ? sub : nullptr, app_ctx);
     return;
   }
 
@@ -368,9 +412,9 @@ void Engine::dispatch(const char* input_after_root, lomessage::Buffer& out, void
     p = trim_left(p);
     if (*p == '\0') {
       if (cur == &_root) {
-        formatHelp(out, nullptr);
+        formatHelp(out, nullptr, app_ctx);
       } else {
-        format_help_recursive(_root.name, cur, prefix_buf, out);
+        format_help_recursive(_root.name, cur, prefix_buf, out, app_ctx);
       }
       return;
     }
@@ -380,10 +424,11 @@ void Engine::dispatch(const char* input_after_root, lomessage::Buffer& out, void
     p = tail;
 
     Command* ch = find_child(cur, tok);
-    if (!ch) {
+    if (!ch || !is_visible(ch, app_ctx)) {
+      // Hidden commands and unknown commands respond identically to avoid leaking existence.
       ::lolog::LoLog::debug("locommand", "unknown token '%.32s' under '%s'", tok,
                             prefix_buf[0] ? prefix_buf : _root.name);
-      format_help_recursive(_root.name, cur, prefix_buf, out);
+      format_help_recursive(_root.name, cur, prefix_buf, out, app_ctx);
       return;
     }
 
@@ -416,6 +461,11 @@ void Engine::dispatch(const char* input_after_root, lomessage::Buffer& out, void
       memcpy(leaf_prefix, prefix_buf, leaf_prefix_len);
       leaf_prefix[leaf_prefix_len] = '\0';
 
+      if (ch->guard && !ch->guard(app_ctx)) {
+        // Same shape as "unknown command" to avoid disclosing the command exists.
+        format_help_recursive(_root.name, cur, prefix_buf, out, app_ctx);
+        return;
+      }
       Context ctx{this, out, rest, ac, ac > 0 ? argv_storage : nullptr, app_ctx, ch, leaf_prefix};
       ch->handler(ctx);
       return;

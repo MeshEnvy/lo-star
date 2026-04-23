@@ -77,11 +77,12 @@ bool Router::matchesGlobalHelp(const char* cmd) const {
   return false;
 }
 
-void Router::formatGlobalHelp(lomessage::Buffer& out) const {
+void Router::formatGlobalHelp(lomessage::Buffer& out, void* app_ctx) const {
   out.append("CLI roots:\n");
   for (int i = 0; i < _n; i++) {
     Engine* e = _engines[i];
     if (!e) continue;
+    if (!e->anyVisible(app_ctx)) continue;
     const char* br = e->rootBrief();
     out.appendf("  %s", e->rootName());
     if (br && br[0]) out.appendf(" - %s", br);
@@ -101,7 +102,7 @@ bool Router::dispatch(const char* command, lomessage::Buffer& out, void* app_ctx
   char* p = trim_left(scratch);
 
   if (*p == '\0' || strcmp(p, "help") == 0 || strcmp(p, "?") == 0) {
-    formatGlobalHelp(out);
+    formatGlobalHelp(out, app_ctx);
     return true;
   }
 
@@ -109,7 +110,7 @@ bool Router::dispatch(const char* command, lomessage::Buffer& out, void* app_ctx
     char* sub = trim_left(p + 5);
     trim_right(sub);
     if (*sub == '\0') {
-      formatGlobalHelp(out);
+      formatGlobalHelp(out, app_ctx);
       return true;
     }
     char* rest = nullptr;
@@ -118,14 +119,15 @@ bool Router::dispatch(const char* command, lomessage::Buffer& out, void* app_ctx
       Engine* e = _engines[i];
       if (!e) continue;
       if (strcmp(root_tok, e->rootName()) == 0) {
+        if (!e->anyVisible(app_ctx)) continue;
         rest = trim_left(rest);
-        e->formatHelp(out, *rest ? rest : nullptr);
+        e->formatHelp(out, *rest ? rest : nullptr, app_ctx);
         return true;
       }
     }
     ::lolog::LoLog::debug("locommand", "unknown help root '%.32s'", root_tok);
     out.appendf("Unknown CLI root: %s\n", root_tok);
-    formatGlobalHelp(out);
+    formatGlobalHelp(out, app_ctx);
     return true;
   }
 

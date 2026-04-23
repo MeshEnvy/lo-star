@@ -1,0 +1,5 @@
+LoUserUser.username max_size:33
+LoUserUser.salt max_size:32
+LoUserUser.password_hash max_size:32
+
+LoUserSession.bind_fp max_size:96

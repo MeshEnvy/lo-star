@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+/** One louser user. `id` is assigned on insert; `salt` is a 32B per-user value. */
+message LoUserUser {
+  uint64 id = 1;
+  string username = 2;
+  bytes salt = 3;
+  bytes password_hash = 4;
+  bool admin = 5;
+  uint32 created_ms = 6;
+}
+
+/** Active session keyed by `lostar::NodeId` (!xxxxxxxx low bits). `bind_fp` is the caller's
+ *  NodeRef.ctx captured at login; empty on platforms whose id already equals native identity. */
+message LoUserSession {
+  uint32 node_id = 1;
+  uint64 user_id = 2;
+  bytes bind_fp = 3;
+  uint32 created_ms = 4;
+}

@@ -23,7 +23,7 @@ struct Context {
   const char* args_raw;       ///< Untokenized remainder after the matched path (trimmed of leading spaces).
   int argc;                   ///< Token count for remainder (capped at kMaxArgc).
   const char* const* argv;  ///< Pointers into dispatch scratch (null-terminated tokens).
-  void* app_ctx;              ///< Opaque pointer from dispatch() (e.g. mesh + sender_ts).
+  void* app_ctx;              ///< Opaque pointer from dispatch() (e.g. caller NodeRef, mesh + sender_ts).
   const Command* command;     ///< Current leaf being dispatched (for printHelp).
   const char* path_prefix;    ///< Space-separated path without root and without leaf name (e.g. "wifi " or "").
 
@@ -33,6 +33,15 @@ struct Context {
 };
 
 typedef void (*Handler)(Context& ctx);
+
+/**
+ * Pure predicate of caller identity. Used for both dispatch-time authorization and help-time
+ * visibility — MUST NOT produce output. Takes the same @p app_ctx the dispatcher hands to
+ * handlers, so the caller identity is available (e.g. a `lostar::NodeRef*` stashed by
+ * `LotatoCli::dispatchLine`). A leaf/group with a guard is hidden from help when the guard
+ * returns false, and dispatch emits a canned error without touching the handler.
+ */
+typedef bool (*Guard)(void* app_ctx);
 
 /** One node in the command tree: either a group (children only) or a leaf (handler only). */
 struct Command {
@@ -48,6 +57,7 @@ struct Command {
   int n_arg_specs;
   const char* details;        ///< Optional extra paragraph after Arguments block.
   char usage_storage[96];     ///< When arg_specs set, generated usage lives here; usage_suffix may point here.
+  Guard guard;                ///< Optional per-command guard (nullptr = always visible + runnable).
 };
 
 /** Max argv entries passed to a leaf handler. */

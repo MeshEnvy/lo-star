@@ -30,7 +30,9 @@
       "+<losettings/*.pb.c>",
       "+<lofi/*.pb.c>",
       "+<lofs/*.cpp>",
-      "+<lofs/backends/*.cpp>"
+      "+<lofs/backends/*.cpp>",
+      "+<louser/*.cpp>",
+      "+<louser/*.pb.c>"
     ],
     "flags": [
       "-D PB_FIELD_32BIT=1",
@@ -41,7 +43,9 @@
       "-I losettings",
       "-I lofi",
       "-I lostar/include",
-      "-I lofs/include"
+      "-I lofs/include",
+      "-I louser/include",
+      "-I louser"
     ]
   }
 }
