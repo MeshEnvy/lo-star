@@ -23,7 +23,7 @@ class Lofi {
 public:
   static Lofi& instance();
 
-  /** LoDB tables + STA event handlers. Idempotent. */
+  /** LoDB tables + STA event handlers. Idempotent. Does not start a WiFi scan (call `requestWifiScan()` if needed). */
   void begin();
 
   /** Force public DNS (1.1.1.1/8.8.8.8) after STA GOT_IP. Default off. */

@@ -639,9 +639,6 @@ void Lofi::begin() {
   reloadKnownCache();
   reloadActiveCache();
   registerWifiHandlers();
-  // Kick a one-shot scan so the list is populated before the user asks.
-  // Scan completion auto-calls resumeStaSavedCredentials() which reconnects to the active AP.
-  requestWifiScan();
 }
 
 static void wifi_scan_fill_from_driver(int n) {
