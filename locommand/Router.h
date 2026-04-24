@@ -16,6 +16,10 @@ public:
   void add(Engine* e);
   void clear();
 
+  /** Look up a registered engine by its root name (e.g. "wifi", "lotato"). Returns nullptr if
+   *  no engine with that root is registered. Used by fork adapters to attach guard policy. */
+  Engine* engineByName(const char* root_name);
+
   /** True if @p cmd matches any registered engine root (leading spaces skipped). */
   bool matchesAnyRoot(const char* cmd) const;
 

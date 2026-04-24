@@ -53,6 +53,17 @@ void Router::clear() {
   _n = 0;
 }
 
+Engine* Router::engineByName(const char* root_name) {
+  if (!root_name) return nullptr;
+  for (int i = 0; i < _n; i++) {
+    Engine* e = _engines[i];
+    if (!e) continue;
+    const char* n = e->rootName();
+    if (n && strcmp(n, root_name) == 0) return e;
+  }
+  return nullptr;
+}
+
 bool Router::matchesAnyRoot(const char* cmd) const {
   if (!cmd) return false;
   if (!_n) return false;

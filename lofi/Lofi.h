@@ -19,9 +19,6 @@ struct HttpResult {
   int err;
 };
 
-/** Called by Lofi when an async operation (e.g. WiFi scan) starts/ends. Default no-op. */
-extern "C" __attribute__((weak)) void lofi_async_busy(bool busy);
-
 class Lofi {
 public:
   static Lofi& instance();
@@ -97,8 +94,13 @@ private:
   void* _connect_cb_ctx = nullptr;
 };
 
-/** Register `wifi status|scan|connect|forget` on a root `wifi` engine (implemented in app). */
-void bindWifiCli(locommand::Engine& eng);
+/**
+ * One-shot bringup: start the lofi subsystem, register the `wifi` CLI engine with
+ * `lostar::router()`, wire async scan/connect completion to deferred replies, and install a
+ * tick hook that services wifi scans. Idempotent. Fork adapters call this after
+ * `lotato::init()` and `louser::init()`.
+ */
+void init();
 
 }  // namespace lofi
 

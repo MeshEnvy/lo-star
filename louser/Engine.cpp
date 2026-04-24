@@ -1,8 +1,11 @@
 #include <louser/Engine.h>
 #include <louser/Auth.h>
+#include <louser/Guard.h>
+#include <louser/LoUser.h>
 #include <louser/User.h>
 
 #include <lolog/LoLog.h>
+#include <lostar/Router.h>
 
 #include <cctype>
 #include <cstdio>
@@ -212,6 +215,25 @@ bool rewrite_alias(const char* in, char* out, size_t out_cap) {
     return n > 0 && (size_t)n < out_cap;
   }
   return false;
+}
+
+void init() {
+  static bool              s_inited = false;
+  static locommand::Engine s_user_eng{"user"};
+  if (s_inited) return;
+  s_inited = true;
+
+  register_engine(s_user_eng);
+
+  s_user_eng.setGuardFor("logout",         &require_user);
+  s_user_eng.setGuardFor("whoami",         &require_user);
+  s_user_eng.setGuardFor("bye",            &require_user);
+  s_user_eng.setGuardFor("sessions.clear", &require_admin);
+  s_user_eng.setGuardFor("delete",         &require_admin);
+  s_user_eng.setGuardFor("rename",         &require_admin);
+  s_user_eng.setGuardFor("passwd",         &require_admin);
+
+  lostar::router().add(&s_user_eng);
 }
 
 }  // namespace louser

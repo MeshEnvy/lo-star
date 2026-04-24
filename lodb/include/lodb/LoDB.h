@@ -9,10 +9,12 @@
 #include <string>
 #include <vector>
 
-#if !defined(PB_FIELD_32BIT) || (PB_FIELD_32BIT != 1)
-#pragma message("lo-star requires PB_FIELD_32BIT=1 for nanopb ABI compatibility")
-#error "Define PB_FIELD_32BIT=1 for all translation units (including nanopb sources)"
-#endif
+/*
+ * LoDB exposes `pb_msgdesc_t*` in its public API. Callers who supply descriptors
+ * must compile with the same nanopb descriptor-width setting as lo-star's internals
+ * (by default: 16-bit field descriptors; i.e. `PB_FIELD_32BIT` unset). Any mismatch
+ * between the caller's descriptor layout and lodb's reader is a classic ODR hazard.
+ */
 
 /**
  * LoDB - Synchronous Protobuf Database
