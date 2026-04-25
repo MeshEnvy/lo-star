@@ -18,21 +18,7 @@ const lostar::NodeRef* node_ref_from_ctx(const locommand::Context& ctx) {
   return static_cast<const lostar::NodeRef*>(ctx.app_ctx);
 }
 
-/* ── user register <name> <pw> ─────────────────────────────────────── */
-void h_register(locommand::Context& ctx) {
-  if (ctx.argc < 2) {
-    ctx.printHelp();
-    return;
-  }
-  User u;
-  int rc = Auth::instance().users().create(ctx.argv[0], ctx.argv[1], &u);
-  if (rc == 1) { ctx.out.append("Err - username already exists"); return; }
-  if (rc == 2) { ctx.out.append("Err - invalid username or password"); return; }
-  if (rc == 3) { ctx.out.append("Err - storage error"); return; }
-  ctx.out.appendf("OK - user %s created%s", u.username, u.admin ? " (admin)" : "");
-}
-
-/* ── user login <name> <pw> ────────────────────────────────────────── */
+/* ── shared login path (after hi creates or finds user) ────────────── */
 void do_login(locommand::Context& ctx, const User& u) {
   const lostar::NodeRef* nr = node_ref_from_ctx(ctx);
   if (!nr) { ctx.out.append("Err - no caller identity"); return; }
@@ -41,16 +27,6 @@ void do_login(locommand::Context& ctx, const User& u) {
     return;
   }
   ctx.out.appendf("OK - welcome, %s%s", u.username, u.admin ? " (admin)" : "");
-}
-
-void h_login(locommand::Context& ctx) {
-  if (ctx.argc < 2) { ctx.printHelp(); return; }
-  User u;
-  if (!Auth::instance().users().findByUsername(ctx.argv[0], u) || !Users::verifyPassword(u, ctx.argv[1])) {
-    ctx.out.append("Err - unknown user or wrong password");
-    return;
-  }
-  do_login(ctx, u);
 }
 
 /* ── user whoami ───────────────────────────────────────────────────── */
@@ -64,7 +40,7 @@ void h_whoami(locommand::Context& ctx) {
   ctx.out.appendf("%s%s", u.username, u.admin ? " (admin)" : "");
 }
 
-/* ── user logout ───────────────────────────────────────────────────── */
+/* ── `bye` bare handler (only way to log out) ─────────────────────── */
 void h_logout(locommand::Context& ctx) {
   const lostar::NodeRef* nr = node_ref_from_ctx(ctx);
   if (!nr) { ctx.out.append("(not signed in)"); return; }
@@ -74,7 +50,10 @@ void h_logout(locommand::Context& ctx) {
 
 /* ── user hi <name> <pw> — register if missing, else login ─────────── */
 void h_hi(locommand::Context& ctx) {
-  if (ctx.argc < 2) { ctx.printHelp(); return; }
+  if (ctx.argc < 2) {
+    ctx.out.append("hi <username> <password>  - register if new, else log in\n");
+    return;
+  }
   User u;
   if (Auth::instance().users().findByUsername(ctx.argv[0], u)) {
     if (!Users::verifyPassword(u, ctx.argv[1])) {
@@ -139,10 +118,6 @@ void h_passwd(locommand::Context& ctx) {
   ctx.out.appendf("OK - password reset for %s (session invalidated)", ctx.argv[0]);
 }
 
-const locommand::ArgSpec k_userpw_args[] = {
-    {"username", "string", nullptr, true, "Account username"},
-    {"password", "secret", nullptr, true, "Account password"},
-};
 const locommand::ArgSpec k_user_args[] = {
     {"username", "string", nullptr, true, "Account username"},
 };
@@ -160,9 +135,6 @@ const locommand::ArgSpec k_passwd_args[] = {
 const lostar::NodeRef* caller_node_ref(const locommand::Context& ctx) { return node_ref_from_ctx(ctx); }
 
 void register_engine(locommand::Engine& user_eng) {
-  user_eng.addWithArgs("register", &h_register, k_userpw_args, 2, nullptr, "create account (first is admin)");
-  user_eng.addWithArgs("login", &h_login, k_userpw_args, 2, nullptr, "log in");
-  user_eng.add("logout", &h_logout, nullptr, nullptr, "clear this node's session");
   user_eng.add("sessions.clear", &h_sessions_clear, nullptr, nullptr, "[admin] drop all sessions");
   user_eng.addWithArgs("delete", &h_delete, k_user_args, 1, nullptr, "[admin] delete account");
   user_eng.addWithArgs("rename", &h_rename, k_rename_args, 2, nullptr, "[admin] rename account");
@@ -192,6 +164,7 @@ void init() {
   s_hi_eng.setRootGuard(&require_logged_out);
   s_hi_eng.setRestHandler(&h_hi, "<username> <password>");
   s_hi_eng.setRootBrief("register if new, else log in");
+  s_hi_eng.setGuestTopHelp(true);
 
   s_bye_eng.setRootGuard(&require_user);
   s_bye_eng.setBareHandler(&h_logout);
@@ -203,7 +176,6 @@ void init() {
 
   register_engine(s_user_eng);
 
-  s_user_eng.setGuardFor("logout", &require_user);
   s_user_eng.setGuardFor("sessions.clear", &require_admin);
   s_user_eng.setGuardFor("delete", &require_admin);
   s_user_eng.setGuardFor("rename", &require_admin);

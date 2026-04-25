@@ -10,13 +10,15 @@ namespace {
 BannerFn s_banner_fn = nullptr;
 void*      s_banner_user = nullptr;
 
-void h_about(locommand::Context& ctx) {
+void emit_banner(lomessage::Buffer& out) {
   if (s_banner_fn) {
-    s_banner_fn(ctx.out, s_banner_user);
+    s_banner_fn(out, s_banner_user);
     return;
   }
-  ctx.out.append("Mesh CLI node.\n");
+  out.append("Mesh CLI node.\n");
 }
+
+void h_about(locommand::Context& ctx) { emit_banner(ctx.out); }
 
 }  // namespace
 
@@ -25,6 +27,8 @@ void set_banner_fn(BannerFn fn, void* user) {
   s_banner_user = user;
 }
 
+void append_banner(lomessage::Buffer& out) { emit_banner(out); }
+
 void init() {
   static bool              done = false;
   static locommand::Engine eng{"about"};
@@ -32,7 +36,8 @@ void init() {
   done = true;
 
   eng.setBareHandler(&h_about);
-  eng.setRootBrief("device info");
+  eng.setRootBrief("about Lotato");
+  eng.setGuestTopHelp(true);
   lostar::router().add(&eng);
 }
 

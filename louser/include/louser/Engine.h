@@ -9,7 +9,7 @@
 namespace louser {
 
 /**
- * Build the `user` CLI engine: register/login/logout + admin subcommands.
+ * Build the `user` CLI engine: admin subcommands (sign-out is root `bye`; sign-up/sign-in is root `hi`).
  *
  * The caller's `NodeRef` must be stashed into `locommand::Context::app_ctx` by the dispatcher
  * before each call; `caller_node_ref(ctx)` unpacks it.

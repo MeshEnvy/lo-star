@@ -18,6 +18,13 @@ public:
   void setRootBrief(const char* brief) { _root_brief = brief; }
   const char* rootBrief() const { return _root_brief; }
 
+  /**
+   * When true, this root appears on signed-out global `help` (compact list, no `CLI roots:` header).
+   * Default false; enable for public entry roots (e.g. `about`, `hi`).
+   */
+  void setGuestTopHelp(bool on) { _guest_top_help = on; }
+  bool guestTopHelp() const { return _guest_top_help; }
+
   /** Register a dotted path under the root (e.g. "wifi.scan"). Creates group segments as needed.
    *  Enforces group-or-leaf invariant. Returns the new leaf or nullptr on conflict / OOM. */
   Command* add(const char* path, Handler handler, const char* usage_suffix = nullptr,
@@ -73,6 +80,7 @@ public:
 private:
   Command _root;
   const char* _root_brief = nullptr;
+  bool _guest_top_help = false;
   Guard _root_guard = nullptr;
   Handler _bare_handler = nullptr;
   Handler _remainder_handler = nullptr;

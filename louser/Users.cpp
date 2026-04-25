@@ -7,6 +7,7 @@
 
 #include <Arduino.h>
 #include <cctype>
+#include <cinttypes>
 #include <cstring>
 
 namespace louser {
@@ -65,7 +66,7 @@ void copy_to_pb(const User& u, LoUserUser& out) {
 
 char id_key_buf[24];
 const char* id_to_key(uint64_t id) {
-  snprintf(id_key_buf, sizeof(id_key_buf), "%llu", (unsigned long long)id);
+  snprintf(id_key_buf, sizeof(id_key_buf), "%" PRIu64, id);
   return id_key_buf;
 }
 
@@ -145,8 +146,8 @@ int Users::create(const char* username, const char* password, User* created_out)
   if (_db.insert(kTable, id_to_key(u.id), &pb) != LODB_OK) return 3;
 
   if (created_out) *created_out = u;
-  ::lolog::LoLog::info("louser", "user created id=%llu name=%s admin=%d",
-                        (unsigned long long)u.id, u.username, (int)u.admin);
+  ::lolog::LoLog::info("louser", "user created id=%" PRIu64 " name=%s admin=%d", u.id, u.username,
+                        (int)u.admin);
   return 0;
 }
 

@@ -40,14 +40,22 @@ public:
   void appendVisibleEngineRoots(lomessage::Buffer& out, void* app_ctx) const;
 
   /**
-   * When @p is_guest(app_ctx), @ref formatGlobalHelp shows only the guest screen (see @p append_guest)
-   * plus fixed `about` / `login` / `help` lines — no engine list.
+   * When @p is_guest(app_ctx), @ref formatGlobalHelp prints the banner, then @p append_guest, a blank
+   * line, then only roots marked @ref Engine::setGuestTopHelp (that pass @ref Engine::anyVisible).
+   * Signed-in users still get the full `CLI roots:` list and the `Use: help …` line.
    */
   static void setGuestHelp(bool (*is_guest)(void* app_ctx), void (*append_guest)(lomessage::Buffer& out));
+
+  /**
+   * If set, @ref formatGlobalHelp prepends this first (e.g. firmware `about` text).
+   * Owned by this router instance together with the rest of global `help` output.
+   */
+  void setHelpBanner(void (*append_banner)(lomessage::Buffer& out)) { _help_banner = append_banner; }
 
 private:
   Engine* _engines[kMaxEngines];
   int _n;
+  void (*_help_banner)(lomessage::Buffer& out) = nullptr;
 };
 
 }  // namespace locommand

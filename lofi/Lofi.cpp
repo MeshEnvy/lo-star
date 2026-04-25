@@ -30,6 +30,13 @@ extern "C" esp_err_t esp_crt_bundle_attach(void* conf);
 #ifndef LOFI_WIFI_SCAN_TIMEOUT_MS
 #define LOFI_WIFI_SCAN_TIMEOUT_MS 30000
 #endif
+/** Last arg to `WiFi.scanNetworks(..., max_ms_per_chan)`. On ESP32 Arduino core, async
+ *  `WiFi.scanComplete()` uses `(max_ms_per_chan * 20)` ms as a hard ceiling while
+ *  `_scanStarted` is set (WiFiScan.cpp). 300→6s causes spurious WIFI_SCAN_FAILED on
+ *  full-channel scans that legitimately take ~7s before SCAN_DONE. */
+#ifndef LOFI_WIFI_SCAN_PERCHAN_MS
+#define LOFI_WIFI_SCAN_PERCHAN_MS 1000
+#endif
 
 extern "C" __attribute__((weak)) void lofi_async_busy(bool) {}
 /** Firmware may provide a strong definition (e.g. Lotato) to refresh app caches after LoSettings change. */
@@ -307,6 +314,14 @@ static bool wifi_reason_failover(uint8_t reason) {
   }
 }
 
+/** Before first esp_wifi_init: static buffers avoid dynamic RX alloc when internal heap is tight. */
+static void lofi_wifi_prepare_driver() {
+  WiFi.persistent(false);
+#if defined(ARDUINO_ARCH_ESP32)
+  WiFi.useStaticBuffers(true);
+#endif
+}
+
 }  // namespace
 
 namespace lofi {
@@ -432,6 +447,11 @@ bool Lofi::forgetKnownWifi(const char* ssid) {
 
 void Lofi::resumeStaSavedCredentials() {
   if (s_active_ssid[0] == '\0') return;
+  lofi_wifi_prepare_driver();
+  if (!WiFi.mode(WIFI_STA)) {
+    ::lolog::LoLog::debug("lofi", "resumeSta: WiFi.mode(STA) failed");
+    return;
+  }
   const char* pw = s_active_psk[0] ? s_active_psk : nullptr;
   WiFi.begin(s_active_ssid, pw);
   WiFi.setSleep(WIFI_PS_NONE);
@@ -480,8 +500,16 @@ void Lofi::beginConnect(const char* ssid, const char* psk) {
   s_connect.detail[0] = '\0';
   s_connect.t0 = millis();
   _failover_suppress = true;
+  lofi_wifi_prepare_driver();
   WiFi.disconnect(false, false);
-  WiFi.mode(WIFI_STA);
+  if (!WiFi.mode(WIFI_STA)) {
+    s_connect.pending = false;
+    _failover_suppress = false;
+    snprintf(s_connect.detail, sizeof(s_connect.detail), "WiFi init failed");
+    s_connect.result_ready = true;
+    lofi_async_busy(false);
+    return;
+  }
   WiFi.begin(ssid, psk && psk[0] ? psk : nullptr);
   WiFi.setSleep(WIFI_PS_NONE);
   lofi_async_busy(true);
@@ -634,6 +662,7 @@ static void register_lofi_config_schema_once() {
 }
 
 void Lofi::begin() {
+  lofi_wifi_prepare_driver();
   register_lofi_config_schema_once();
   ensureTables();
   reloadKnownCache();
@@ -716,7 +745,7 @@ void Lofi::serviceWifiScan() {
     case WifiScanPhase::DisconnectWait:
       if ((int32_t)(millis() - s_wscan_t0) < 120) break;
       {
-        int16_t started = WiFi.scanNetworks(true, false, false, 300);
+        int16_t started = WiFi.scanNetworks(true, false, false, LOFI_WIFI_SCAN_PERCHAN_MS);
         if (started == WIFI_SCAN_FAILED) {
           WiFi.scanDelete();
           staFailoverSuppress(false);
@@ -775,7 +804,15 @@ void Lofi::requestWifiScan() {
     return;
   }
   staFailoverSuppress(true);
-  WiFi.mode(WIFI_STA);
+  lofi_wifi_prepare_driver();
+  if (!WiFi.mode(WIFI_STA)) {
+    staFailoverSuppress(false);
+    s_wscan_phase = WifiScanPhase::Idle;
+    s_wscan_results_ready = false;
+    if (_scan_cb) _scan_cb(_scan_cb_ctx, "Err - WiFi driver init failed");
+    lofi_async_busy(false);
+    return;
+  }
   WiFi.disconnect(false, false);
   s_wscan_t0 = millis();
   s_wscan_phase = WifiScanPhase::DisconnectWait;

@@ -13,7 +13,10 @@ using BannerFn = void (*)(lomessage::Buffer& out, void* user);
  */
 void set_banner_fn(BannerFn fn, void* user);
 
-/** Register the `about` engine on `lostar::router()`. Idempotent. */
+/** Same output as the `about` command (uses @ref set_banner_fn). Pass to @ref locommand::Router::setHelpBanner. */
+void append_banner(lomessage::Buffer& out);
+
+/** Register the `about` engine on `lostar::router()`. Does not wire global `help`; the app calls `lostar::router().setHelpBanner(&loabout::append_banner)` after @ref set_banner_fn. Idempotent. */
 void init();
 
 }  // namespace loabout
