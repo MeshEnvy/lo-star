@@ -243,6 +243,15 @@ static lofi::HttpResult post_https(const char* url, const char* bearer, const ch
   cfg.timeout_ms = (int)LOFI_HTTP_TIMEOUT_MS;
   cfg.crt_bundle_attach = esp_crt_bundle_attach;
   cfg.transport_type = HTTP_TRANSPORT_OVER_SSL;
+  cfg.buffer_size = 1024;
+  cfg.buffer_size_tx = 1024;
+
+  if (::lolog::LoLog::isVerbose()) {
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    ::lolog::LoLog::debug("lofi", "lofi https: pre-connect heap free=%u max_block=%u", (unsigned)free_heap,
+                          (unsigned)largest_block);
+  }
 
   esp_http_client_handle_t client = esp_http_client_init(&cfg);
   if (!client) {
@@ -317,7 +326,7 @@ static bool wifi_reason_failover(uint8_t reason) {
 static void lofi_wifi_prepare_driver() {
   WiFi.persistent(false);
 #if defined(ARDUINO_ARCH_ESP32)
-  WiFi.useStaticBuffers(true);
+  WiFi.useStaticBuffers(false);
 #endif
 }
 
