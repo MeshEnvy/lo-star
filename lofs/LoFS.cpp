@@ -20,11 +20,11 @@
 #include <freertos/semphr.h>
 static SemaphoreHandle_t s_lofs_mtx;
 static void lofs_lock() {
-  if (!s_lofs_mtx) s_lofs_mtx = xSemaphoreCreateMutex();
-  if (s_lofs_mtx) xSemaphoreTake(s_lofs_mtx, portMAX_DELAY);
+  if (!s_lofs_mtx) s_lofs_mtx = xSemaphoreCreateRecursiveMutex();
+  if (s_lofs_mtx) xSemaphoreTakeRecursive(s_lofs_mtx, portMAX_DELAY);
 }
 static void lofs_unlock() {
-  if (s_lofs_mtx) xSemaphoreGive(s_lofs_mtx);
+  if (s_lofs_mtx) xSemaphoreGiveRecursive(s_lofs_mtx);
 }
 #else
 static void lofs_lock() {}
@@ -40,6 +40,12 @@ struct MountEntry {
 
 MountEntry s_mounts[8];
 uint8_t s_nmounts = 0;
+
+/** Static buffers used ONLY while lofs_lock is held. Saves ~1.5KB of stack per call chain. */
+static char s_buf_v1[256];
+static char s_buf_v2[256];
+static char s_buf_s1[256];
+static char s_buf_s2[256];
 
 bool is_mount_prefix(const char* path, const char* pref, size_t plen) {
   if (strncmp(path, pref, plen) != 0) return false;
@@ -130,41 +136,49 @@ bool copy_stream(lofs::FsBackend* from_b, const char* from_p, lofs::FsBackend* t
 bool rename_via_tmp(const char* src_v, const char* dst_v) {
   lofs::FsBackend* sb = nullptr;
   lofs::FsBackend* db = nullptr;
-  char sp[256], dp[256], tmp_v[280];
-  if (!resolve_locked(src_v, &sb, sp, sizeof(sp))) return false;
-  if (!resolve_locked(dst_v, &db, dp, sizeof(dp))) return false;
 
-  // Same-backend rename can be done directly and avoids tmp-name growth,
-  // which is important for tight SPIFFS/LittleFS name limits.
+  if (!resolve_locked(src_v, &sb, s_buf_s1, sizeof(s_buf_s1))) return false;
+  char src_stripped[256];
+  strncpy(src_stripped, s_buf_s1, sizeof(src_stripped) - 1);
+  src_stripped[sizeof(src_stripped) - 1] = '\0';
+
+  if (!resolve_locked(dst_v, &db, s_buf_s2, sizeof(s_buf_s2))) return false;
+
   if (sb == db) {
-    if (db->exists(dp)) {
-      if (!db->remove(dp)) return false;
+    if (db->exists(s_buf_s2)) {
+      if (!db->remove(s_buf_s2)) return false;
     }
-    return db->rename(sp, dp);
+    return db->rename(src_stripped, s_buf_s2);
   }
 
   lofs::FsBackend* tb = nullptr;
-  char tmp_strip[256];
-  int n = snprintf(tmp_v, sizeof(tmp_v), "%s.t", dst_v);
-  if (n <= 0 || (size_t)n >= sizeof(tmp_v)) return false;
-  if (!resolve_locked(tmp_v, &tb, tmp_strip, sizeof(tmp_strip))) return false;
+  int n = snprintf(s_buf_v2, sizeof(s_buf_v2), "%s.t", dst_v);
+  if (n <= 0 || (size_t)n >= sizeof(s_buf_v2)) return false;
+  if (!resolve_locked(s_buf_v2, &tb, s_buf_s1, sizeof(s_buf_s1))) return false;
   if (tb != db) return false;
 
-  if (!copy_stream(sb, sp, tb, tmp_strip)) {
-    if (tb->exists(tmp_strip)) tb->remove(tmp_strip);
+  char tmp_stripped[256];
+  strncpy(tmp_stripped, s_buf_s1, sizeof(tmp_stripped) - 1);
+  tmp_stripped[sizeof(tmp_stripped) - 1] = '\0';
+
+  if (!copy_stream(sb, src_stripped, tb, tmp_stripped)) {
+    if (tb->exists(tmp_stripped)) tb->remove(tmp_stripped);
     return false;
   }
-  if (db->exists(dp)) {
-    if (!db->remove(dp)) {
-      tb->remove(tmp_strip);
+
+  if (!resolve_locked(dst_v, &db, s_buf_s2, sizeof(s_buf_s2))) return false;
+
+  if (db->exists(s_buf_s2)) {
+    if (!db->remove(s_buf_s2)) {
+      tb->remove(tmp_stripped);
       return false;
     }
   }
-  if (!db->rename(tmp_strip, dp)) {
-    tb->remove(tmp_strip);
+  if (!db->rename(tmp_stripped, s_buf_s2)) {
+    tb->remove(tmp_stripped);
     return false;
   }
-  (void)sb->remove(sp);
+  (void)sb->remove(src_stripped);
   return true;
 }
 
@@ -242,31 +256,33 @@ void LoFS::bindInternalFs(lofs::FsVolume* vol) {
 }
 
 static lofs::IoFile open_norm(const char* filepath, uint8_t mode) {
-  char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return {};
-  lofs::FsBackend* b = nullptr;
-  char stripped[256];
   lofs_lock();
-  if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
+  if (!normalize_virtual(filepath, s_buf_v1, sizeof(s_buf_v1))) {
     lofs_unlock();
     return {};
   }
-  lofs::IoFile f = b->open(stripped, mode);
+  lofs::FsBackend* b = nullptr;
+  if (!resolve_locked(s_buf_v1, &b, s_buf_s1, sizeof(s_buf_s1))) {
+    lofs_unlock();
+    return {};
+  }
+  lofs::IoFile f = b->open(s_buf_s1, mode);
   lofs_unlock();
   return f;
 }
 
 static lofs::IoFile open_norm_str(const char* filepath, const char* mode) {
-  char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return {};
-  lofs::FsBackend* b = nullptr;
-  char stripped[256];
   lofs_lock();
-  if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
+  if (!normalize_virtual(filepath, s_buf_v1, sizeof(s_buf_v1))) {
     lofs_unlock();
     return {};
   }
-  lofs::IoFile f = b->open(stripped, mode);
+  lofs::FsBackend* b = nullptr;
+  if (!resolve_locked(s_buf_v1, &b, s_buf_s1, sizeof(s_buf_s1))) {
+    lofs_unlock();
+    return {};
+  }
+  lofs::IoFile f = b->open(s_buf_s1, mode);
   lofs_unlock();
   return f;
 }
@@ -276,57 +292,70 @@ lofs::IoFile LoFS::open(const char* filepath, uint8_t mode) { return open_norm(f
 lofs::IoFile LoFS::open(const char* filepath, const char* mode) { return open_norm_str(filepath, mode); }
 
 bool LoFS::exists(const char* filepath) {
-  char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return false;
-  lofs::FsBackend* b = nullptr;
-  char stripped[256];
   lofs_lock();
-  if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
+  if (!normalize_virtual(filepath, s_buf_v1, sizeof(s_buf_v1))) {
     lofs_unlock();
     return false;
   }
-  bool e = b->exists(stripped);
+  lofs::FsBackend* b = nullptr;
+  if (!resolve_locked(s_buf_v1, &b, s_buf_s1, sizeof(s_buf_s1))) {
+    lofs_unlock();
+    return false;
+  }
+  bool e = b->exists(s_buf_s1);
   lofs_unlock();
   return e;
 }
 
 bool LoFS::mkdir(const char* filepath) {
-  char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return false;
-  lofs::FsBackend* b = nullptr;
-  char stripped[256];
   lofs_lock();
-  if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
+  if (!normalize_virtual(filepath, s_buf_v1, sizeof(s_buf_v1))) {
     lofs_unlock();
     return false;
   }
-  bool ok = b->mkdir(stripped);
+  lofs::FsBackend* b = nullptr;
+  if (!resolve_locked(s_buf_v1, &b, s_buf_s1, sizeof(s_buf_s1))) {
+    lofs_unlock();
+    return false;
+  }
+  bool ok = b->mkdir(s_buf_s1);
   lofs_unlock();
   return ok;
 }
 
 bool LoFS::remove(const char* filepath) {
-  char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return false;
-  lofs::FsBackend* b = nullptr;
-  char stripped[256];
   lofs_lock();
-  if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
+  if (!normalize_virtual(filepath, s_buf_v1, sizeof(s_buf_v1))) {
     lofs_unlock();
     return false;
   }
-  bool ok = b->remove(stripped);
+  lofs::FsBackend* b = nullptr;
+  if (!resolve_locked(s_buf_v1, &b, s_buf_s1, sizeof(s_buf_s1))) {
+    lofs_unlock();
+    return false;
+  }
+  bool ok = b->remove(s_buf_s1);
   lofs_unlock();
   return ok;
 }
 
 bool LoFS::rename(const char* oldfilepath, const char* newfilepath) {
   if (!oldfilepath || !newfilepath) return false;
-  char src_v[256], dst_v[256];
-  if (!normalize_virtual(oldfilepath, src_v, sizeof(src_v))) return false;
-  if (!normalize_virtual(newfilepath, dst_v, sizeof(dst_v))) return false;
   lofs_lock();
-  bool ok = rename_via_tmp(src_v, dst_v);
+  if (!normalize_virtual(oldfilepath, s_buf_v1, sizeof(s_buf_v1))) {
+    lofs_unlock();
+    return false;
+  }
+  // We must copy v1 because normalize_virtual for v2 will clobber it.
+  char src_v[256];
+  strncpy(src_v, s_buf_v1, sizeof(src_v) - 1);
+  src_v[sizeof(src_v) - 1] = '\0';
+
+  if (!normalize_virtual(newfilepath, s_buf_v1, sizeof(s_buf_v1))) {
+    lofs_unlock();
+    return false;
+  }
+  bool ok = rename_via_tmp(src_v, s_buf_v1);
   lofs_unlock();
   return ok;
 }
@@ -391,28 +420,29 @@ bool LoFS::readFileAtomic(const char* filepath, uint8_t* out, size_t cap, size_t
 }
 
 bool LoFS::rmdir(const char* filepath, bool recursive) {
-  char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return false;
-  lofs::FsBackend* b = nullptr;
-  char stripped[256];
   lofs_lock();
-  if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
+  if (!normalize_virtual(filepath, s_buf_v1, sizeof(s_buf_v1))) {
     lofs_unlock();
     return false;
   }
-  bool ok = b->rmdir(stripped, recursive);
+  lofs::FsBackend* b = nullptr;
+  if (!resolve_locked(s_buf_v1, &b, s_buf_s1, sizeof(s_buf_s1))) {
+    lofs_unlock();
+    return false;
+  }
+  bool ok = b->rmdir(s_buf_s1, recursive);
   lofs_unlock();
   return ok;
 }
 
 uint64_t LoFS::totalBytes(const char* filepath) {
-  char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return 0;
-  lofs::FsBackend* b = nullptr;
-  char stripped[256];
-  (void)stripped;
   lofs_lock();
-  if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
+  if (!normalize_virtual(filepath, s_buf_v1, sizeof(s_buf_v1))) {
+    lofs_unlock();
+    return 0;
+  }
+  lofs::FsBackend* b = nullptr;
+  if (!resolve_locked(s_buf_v1, &b, s_buf_s1, sizeof(s_buf_s1))) {
     lofs_unlock();
     return 0;
   }
@@ -422,12 +452,13 @@ uint64_t LoFS::totalBytes(const char* filepath) {
 }
 
 uint64_t LoFS::usedBytes(const char* filepath) {
-  char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return 0;
-  lofs::FsBackend* b = nullptr;
-  char stripped[256];
   lofs_lock();
-  if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
+  if (!normalize_virtual(filepath, s_buf_v1, sizeof(s_buf_v1))) {
+    lofs_unlock();
+    return 0;
+  }
+  lofs::FsBackend* b = nullptr;
+  if (!resolve_locked(s_buf_v1, &b, s_buf_s1, sizeof(s_buf_s1))) {
     lofs_unlock();
     return 0;
   }
