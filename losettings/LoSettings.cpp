@@ -258,6 +258,9 @@ bool LoSettings::setBool(const char* key, bool v) {
   if (!valid_key(key)) return false;
   ensure_registered();
   LoSettingsKv rec;
+  if (load(_db, key, rec) && rec.kind == KIND_BOOL && rec.data.size == 1 && (rec.data.bytes[0] != 0) == v) {
+    return true; // Unchanged
+  }
   fill_base(rec, key, KIND_BOOL);
   rec.data.size = 1;
   rec.data.bytes[0] = v ? 1 : 0;
@@ -268,6 +271,11 @@ bool LoSettings::setInt(const char* key, int32_t v) {
   if (!valid_key(key)) return false;
   ensure_registered();
   LoSettingsKv rec;
+  if (load(_db, key, rec) && rec.kind == KIND_INT32 && rec.data.size == 4) {
+    int32_t exist;
+    memcpy(&exist, rec.data.bytes, 4);
+    if (exist == v) return true;
+  }
   fill_base(rec, key, KIND_INT32);
   rec.data.size = 4;
   memcpy(rec.data.bytes, &v, 4);
@@ -278,6 +286,11 @@ bool LoSettings::setUInt(const char* key, uint32_t v) {
   if (!valid_key(key)) return false;
   ensure_registered();
   LoSettingsKv rec;
+  if (load(_db, key, rec) && rec.kind == KIND_UINT32 && rec.data.size == 4) {
+    uint32_t exist;
+    memcpy(&exist, rec.data.bytes, 4);
+    if (exist == v) return true;
+  }
   fill_base(rec, key, KIND_UINT32);
   rec.data.size = 4;
   memcpy(rec.data.bytes, &v, 4);
@@ -288,6 +301,11 @@ bool LoSettings::setFloat(const char* key, float v) {
   if (!valid_key(key)) return false;
   ensure_registered();
   LoSettingsKv rec;
+  if (load(_db, key, rec) && rec.kind == KIND_FLOAT && rec.data.size == 4) {
+    float exist;
+    memcpy(&exist, rec.data.bytes, 4);
+    if (exist == v) return true;
+  }
   fill_base(rec, key, KIND_FLOAT);
   rec.data.size = 4;
   memcpy(rec.data.bytes, &v, 4);
@@ -300,7 +318,12 @@ bool LoSettings::setString(const char* key, const char* v) {
   const char* src = v ? v : "";
   size_t n = strlen(src);
   if (n > sizeof(LoSettingsKv::data.bytes)) n = sizeof(LoSettingsKv::data.bytes);
+  
   LoSettingsKv rec;
+  if (load(_db, key, rec) && rec.kind == KIND_STRING && rec.data.size == n) {
+    if (n == 0 || memcmp(rec.data.bytes, src, n) == 0) return true;
+  }
+  
   fill_base(rec, key, KIND_STRING);
   rec.data.size = (pb_size_t)n;
   if (n) memcpy(rec.data.bytes, src, n);
@@ -311,7 +334,12 @@ bool LoSettings::setBytes(const char* key, const uint8_t* v, size_t n) {
   if (!valid_key(key) || (!v && n)) return false;
   ensure_registered();
   if (n > sizeof(LoSettingsKv::data.bytes)) n = sizeof(LoSettingsKv::data.bytes);
+  
   LoSettingsKv rec;
+  if (load(_db, key, rec) && rec.kind == KIND_BYTES && rec.data.size == n) {
+    if (n == 0 || memcmp(rec.data.bytes, v, n) == 0) return true;
+  }
+  
   fill_base(rec, key, KIND_BYTES);
   rec.data.size = (pb_size_t)n;
   if (n) memcpy(rec.data.bytes, v, n);
