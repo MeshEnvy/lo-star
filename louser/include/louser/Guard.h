@@ -11,6 +11,9 @@ namespace louser {
 /** True if the caller has any active session (= logged in). */
 bool require_user(void* app_ctx);
 
+/** True if the caller is signed out (has identity but no session). */
+bool require_logged_out(void* app_ctx);
+
 /** True if the caller is a logged-in admin. */
 bool require_admin(void* app_ctx);
 

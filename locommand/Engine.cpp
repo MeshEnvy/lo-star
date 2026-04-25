@@ -95,18 +95,23 @@ bool is_visible(const Command* c, void* app_ctx) {
   return false;
 }
 
+void format_one_leaf_line(const char* root_name, const char* prefix, const Command* leaf,
+                          lomessage::Buffer& out) {
+  out.appendf("%s ", root_name);
+  if (prefix && prefix[0] != '\0') out.append(prefix);
+  out.append(leaf->name);
+  if (leaf->usage_suffix && leaf->usage_suffix[0] != '\0') out.appendf(" %s", leaf->usage_suffix);
+  if (leaf->hint && leaf->hint[0] != '\0') out.appendf("  (%s)", leaf->hint);
+  if (leaf->brief && leaf->brief[0] != '\0') out.appendf(" - %s", leaf->brief);
+  out.append("\n");
+}
+
 void format_help_recursive(const char* root_name, const Command* parent, const char* prefix,
                            lomessage::Buffer& out, void* app_ctx) {
   for (Command* c = parent->first_child; c; c = c->next_sibling) {
     if (c->handler && !c->first_child) {
       if (!is_visible(c, app_ctx)) continue;
-      out.appendf("%s ", root_name);
-      if (prefix && prefix[0] != '\0') out.append(prefix);
-      out.append(c->name);
-      if (c->usage_suffix && c->usage_suffix[0] != '\0') out.appendf(" %s", c->usage_suffix);
-      if (c->hint && c->hint[0] != '\0') out.appendf("  (%s)", c->hint);
-      if (c->brief && c->brief[0] != '\0') out.appendf(" - %s", c->brief);
-      out.append("\n");
+      format_one_leaf_line(root_name, prefix, c, out);
     } else if (!c->handler && c->first_child) {
       if (!is_visible(c, app_ctx)) continue;
       char next[120];
@@ -118,17 +123,6 @@ void format_help_recursive(const char* root_name, const Command* parent, const c
       format_help_recursive(root_name, c, next, out, app_ctx);
     }
   }
-}
-
-void format_one_leaf_line(const char* root_name, const char* prefix, const Command* leaf,
-                          lomessage::Buffer& out) {
-  out.appendf("%s ", root_name);
-  if (prefix && prefix[0] != '\0') out.append(prefix);
-  out.append(leaf->name);
-  if (leaf->usage_suffix && leaf->usage_suffix[0] != '\0') out.appendf(" %s", leaf->usage_suffix);
-  if (leaf->hint && leaf->hint[0] != '\0') out.appendf("  (%s)", leaf->hint);
-  if (leaf->brief && leaf->brief[0] != '\0') out.appendf(" - %s", leaf->brief);
-  out.append("\n");
 }
 
 }  // namespace
@@ -180,7 +174,9 @@ void build_argv_from_rest(char* rest, const char** argv, int* argc) {
 
 }  // namespace
 
-Engine::Engine(const char* root_name) : _root_brief(nullptr) {
+Engine::Engine(const char* root_name)
+    : _root_brief(nullptr), _root_guard(nullptr), _bare_handler(nullptr), _remainder_handler(nullptr),
+      _rest_arg_usage(nullptr) {
   memset(&_root, 0, sizeof(_root));
   _root.name = root_name;
 }
@@ -322,12 +318,24 @@ bool Engine::matchesRoot(const char* cmd) const {
 }
 
 bool Engine::anyVisible(void* app_ctx) const {
+  if (_root_guard && !_root_guard(app_ctx)) return false;
+  if (_bare_handler || _remainder_handler) return true;
   return is_visible(&_root, app_ctx);
 }
 
 void Engine::formatHelp(lomessage::Buffer& out, const char* sub_path, void* app_ctx) const {
+  if (_root_guard && !_root_guard(app_ctx)) {
+    out.append("That command group is not available for your account. Try: help\n");
+    return;
+  }
   if (!sub_path || sub_path[0] == '\0') {
     format_help_recursive(_root.name, &_root, "", out, app_ctx);
+    if (!_root.first_child && _bare_handler && _root_brief && _root_brief[0]) {
+      out.appendf("%s - %s\n", _root.name, _root_brief);
+    }
+    if (!_root.first_child && _remainder_handler && _rest_arg_usage && _root_brief && _root_brief[0]) {
+      out.appendf("%s %s - %s\n", _root.name, _rest_arg_usage, _root_brief);
+    }
     return;
   }
 
@@ -340,6 +348,12 @@ void Engine::formatHelp(lomessage::Buffer& out, const char* sub_path, void* app_
   int n = tokenize_sub_path(w, tokens, 16);
   if (n == 0) {
     format_help_recursive(_root.name, &_root, "", out, app_ctx);
+    if (!_root.first_child && _bare_handler && _root_brief && _root_brief[0]) {
+      out.appendf("%s - %s\n", _root.name, _root_brief);
+    }
+    if (!_root.first_child && _remainder_handler && _rest_arg_usage && _root_brief && _root_brief[0]) {
+      out.appendf("%s %s - %s\n", _root.name, _rest_arg_usage, _root_brief);
+    }
     return;
   }
 
@@ -392,7 +406,22 @@ void Engine::dispatch(const char* input_after_root, lomessage::Buffer& out, void
 
   char* p = scratch;
 
-  if (*p == '\0' || strcmp(p, "help") == 0 || strcmp(p, "?") == 0) {
+  if (_root_guard && !_root_guard(app_ctx)) {
+    out.append("That command group is not available for your account. Try: help\n");
+    return;
+  }
+
+  if (*p == '\0') {
+    if (_bare_handler) {
+      Context ctx{this, out, "", 0, nullptr, app_ctx, nullptr, ""};
+      _bare_handler(ctx);
+      return;
+    }
+    formatHelp(out, nullptr, app_ctx);
+    return;
+  }
+
+  if (strcmp(p, "help") == 0 || strcmp(p, "?") == 0) {
     formatHelp(out, nullptr, app_ctx);
     return;
   }
@@ -401,6 +430,19 @@ void Engine::dispatch(const char* input_after_root, lomessage::Buffer& out, void
     char* sub = trim_left(p + 5);
     trim_right(sub);
     formatHelp(out, sub[0] != '\0' ? sub : nullptr, app_ctx);
+    return;
+  }
+
+  if (_remainder_handler && *p != '\0') {
+    static const char* argv_storage[kMaxArgc];
+    int              ac = 0;
+    static char      arg_copy[384];
+    arg_copy[0] = '\0';
+    strncpy(arg_copy, p, sizeof(arg_copy) - 1);
+    arg_copy[sizeof(arg_copy) - 1] = '\0';
+    build_argv_from_rest(arg_copy, argv_storage, &ac);
+    Context ctx{this, out, p, ac, ac > 0 ? argv_storage : nullptr, app_ctx, nullptr, ""};
+    _remainder_handler(ctx);
     return;
   }
 

@@ -1,14 +1,13 @@
 #include <louser/Engine.h>
 #include <louser/Auth.h>
 #include <louser/Guard.h>
-#include <louser/LoUser.h>
 #include <louser/User.h>
 
 #include <lolog/LoLog.h>
+#include <locommand/Router.h>
 #include <lostar/Router.h>
 
 #include <cctype>
-#include <cstdio>
 #include <cstring>
 
 namespace louser {
@@ -92,8 +91,6 @@ void h_hi(locommand::Context& ctx) {
   do_login(ctx, u);
 }
 
-void h_bye(locommand::Context& ctx) { h_logout(ctx); }
-
 /* ── admin commands ────────────────────────────────────────────────── */
 void h_sessions_clear(locommand::Context& ctx) {
   Auth::instance().sessions().clearAll();
@@ -165,10 +162,7 @@ const lostar::NodeRef* caller_node_ref(const locommand::Context& ctx) { return n
 void register_engine(locommand::Engine& user_eng) {
   user_eng.addWithArgs("register", &h_register, k_userpw_args, 2, nullptr, "create account (first is admin)");
   user_eng.addWithArgs("login", &h_login, k_userpw_args, 2, nullptr, "log in");
-  user_eng.add("whoami", &h_whoami, nullptr, nullptr, "show current user");
   user_eng.add("logout", &h_logout, nullptr, nullptr, "clear this node's session");
-  user_eng.addWithArgs("hi", &h_hi, k_userpw_args, 2, nullptr, "register if new, else login");
-  user_eng.add("bye", &h_bye, nullptr, nullptr, "alias for logout");
   user_eng.add("sessions.clear", &h_sessions_clear, nullptr, nullptr, "[admin] drop all sessions");
   user_eng.addWithArgs("delete", &h_delete, k_user_args, 1, nullptr, "[admin] delete account");
   user_eng.addWithArgs("rename", &h_rename, k_rename_args, 2, nullptr, "[admin] rename account");
@@ -178,62 +172,50 @@ void register_engine(locommand::Engine& user_eng) {
 
 namespace {
 
-const char* skip_ws(const char* p) {
-  while (*p == ' ' || *p == '\t') p++;
-  return p;
-}
+bool guest_session(void* app_ctx) { return !require_user(app_ctx); }
 
-bool match_token(const char* in, const char* tok, const char** tail_out) {
-  size_t n = strlen(tok);
-  if (strncmp(in, tok, n) != 0) return false;
-  char after = in[n];
-  if (after != '\0' && after != ' ' && after != '\t' && after != '\r' && after != '\n') return false;
-  *tail_out = in + n;
-  return true;
+void guest_help_banner(lomessage::Buffer& out) {
+  out.append("You're not signed in.\n");
 }
 
 }  // namespace
 
-bool rewrite_alias(const char* in, char* out, size_t out_cap) {
-  if (!in || !out || out_cap < 8) return false;
-  const char* p = skip_ws(in);
-  const char* tail = nullptr;
-
-  if (match_token(p, "hi", &tail)) {
-    tail = skip_ws(tail);
-    int n = snprintf(out, out_cap, "user hi%s%s", *tail ? " " : "", tail);
-    return n > 0 && (size_t)n < out_cap;
-  }
-  if (match_token(p, "bye", &tail)) {
-    tail = skip_ws(tail);
-    int n = snprintf(out, out_cap, "user bye%s%s", *tail ? " " : "", tail);
-    return n > 0 && (size_t)n < out_cap;
-  }
-  if (match_token(p, "whoami", &tail)) {
-    tail = skip_ws(tail);
-    int n = snprintf(out, out_cap, "user whoami%s%s", *tail ? " " : "", tail);
-    return n > 0 && (size_t)n < out_cap;
-  }
-  return false;
-}
-
 void init() {
   static bool              s_inited = false;
+  static locommand::Engine s_hi_eng{"hi"};
+  static locommand::Engine s_bye_eng{"bye"};
+  static locommand::Engine s_whoami_eng{"whoami"};
   static locommand::Engine s_user_eng{"user"};
   if (s_inited) return;
   s_inited = true;
 
+  s_hi_eng.setRootGuard(&require_logged_out);
+  s_hi_eng.setRestHandler(&h_hi, "<username> <password>");
+  s_hi_eng.setRootBrief("register if new, else log in");
+
+  s_bye_eng.setRootGuard(&require_user);
+  s_bye_eng.setBareHandler(&h_logout);
+  s_bye_eng.setRootBrief("log out");
+
+  s_whoami_eng.setRootGuard(&require_user);
+  s_whoami_eng.setBareHandler(&h_whoami);
+  s_whoami_eng.setRootBrief("current user");
+
   register_engine(s_user_eng);
 
-  s_user_eng.setGuardFor("logout",         &require_user);
-  s_user_eng.setGuardFor("whoami",         &require_user);
-  s_user_eng.setGuardFor("bye",            &require_user);
+  s_user_eng.setGuardFor("logout", &require_user);
   s_user_eng.setGuardFor("sessions.clear", &require_admin);
-  s_user_eng.setGuardFor("delete",         &require_admin);
-  s_user_eng.setGuardFor("rename",         &require_admin);
-  s_user_eng.setGuardFor("passwd",         &require_admin);
+  s_user_eng.setGuardFor("delete", &require_admin);
+  s_user_eng.setGuardFor("rename", &require_admin);
+  s_user_eng.setGuardFor("passwd", &require_admin);
 
-  lostar::router().add(&s_user_eng);
+  auto& rt = lostar::router();
+  rt.add(&s_hi_eng);
+  rt.add(&s_bye_eng);
+  rt.add(&s_whoami_eng);
+  rt.add(&s_user_eng);
+
+  locommand::Router::setGuestHelp(&guest_session, &guest_help_banner);
 }
 
 }  // namespace louser

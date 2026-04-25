@@ -11,6 +11,9 @@ namespace locommand {
 
 namespace {
 
+bool (*g_guest_is_guest)(void* app_ctx)      = nullptr;
+void (*g_guest_append)(lomessage::Buffer& out) = nullptr;
+
 char* trim_left(char* s) {
   if (!s) return s;
   while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
@@ -40,6 +43,11 @@ char* pop_token(char* s, char** rest) {
 }
 
 }  // namespace
+
+void Router::setGuestHelp(bool (*is_guest)(void* app_ctx), void (*append_guest)(lomessage::Buffer& out)) {
+  g_guest_is_guest = is_guest;
+  g_guest_append   = append_guest;
+}
 
 Router::Router() : _engines{}, _n(0) {}
 
@@ -88,8 +96,7 @@ bool Router::matchesGlobalHelp(const char* cmd) const {
   return false;
 }
 
-void Router::formatGlobalHelp(lomessage::Buffer& out, void* app_ctx) const {
-  out.append("CLI roots:\n");
+void Router::appendVisibleEngineRoots(lomessage::Buffer& out, void* app_ctx) const {
   for (int i = 0; i < _n; i++) {
     Engine* e = _engines[i];
     if (!e) continue;
@@ -99,6 +106,20 @@ void Router::formatGlobalHelp(lomessage::Buffer& out, void* app_ctx) const {
     if (br && br[0]) out.appendf(" - %s", br);
     out.append("\n");
   }
+}
+
+void Router::formatGlobalHelp(lomessage::Buffer& out, void* app_ctx) const {
+  if (g_guest_is_guest && g_guest_is_guest(app_ctx)) {
+    if (g_guest_append) g_guest_append(out);
+    out.append("Commands:\n");
+    out.append("  about\n");
+    out.append("  hi\n");
+    out.append("  user login\n");
+    out.append("  help\n\n");
+    return;
+  }
+  out.append("CLI roots:\n");
+  appendVisibleEngineRoots(out, app_ctx);
   out.append("\nUse: help <root>  or  <root> help  for commands under that root.\n");
 }
 

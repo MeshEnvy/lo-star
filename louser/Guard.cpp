@@ -19,6 +19,12 @@ bool require_user(void* app_ctx) {
   return Auth::instance().sessions().whoami(*nr) != 0;
 }
 
+bool require_logged_out(void* app_ctx) {
+  const lostar::NodeRef* nr = node_ref(app_ctx);
+  if (!nr) return false;
+  return Auth::instance().sessions().whoami(*nr) == 0;
+}
+
 bool require_admin(void* app_ctx) {
   const lostar::NodeRef* nr = node_ref(app_ctx);
   if (!nr) return false;

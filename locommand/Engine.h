@@ -28,9 +28,27 @@ public:
                        const char* hint = nullptr, const char* brief = nullptr, const char* details = nullptr);
 
   /**
-   * Attach a `Guard` to the command at @p dotted_path (e.g. "wifi.scan"). Commands with a guard
-   * are both hidden from help and rejected at dispatch when the guard predicate returns false
-   * for the caller. Returns true on success; false if path is unknown.
+   * If set, the whole engine (root) is hidden from global help and dispatch/help when the guard
+   * fails for @p app_ctx (e.g. `require_admin` for lotato/config/wifi).
+   */
+  void setRootGuard(Guard g) { _root_guard = g; }
+
+  /** If set, a bare root (`about` with no subcommand) runs this instead of listing engine help. */
+  void setBareHandler(Handler h) { _bare_handler = h; }
+
+  /**
+   * If set, any non-empty input after the root (that is not `help` / `?` / `help …`) is tokenized
+   * as argv and passed to @p h. Use for roots like `hi <user> <pw>` with no subcommand name.
+   * @p arg_usage_suffix usage after the root name, e.g. `"<username> <password>"` (shown in help).
+   */
+  void setRestHandler(Handler h, const char* arg_usage_suffix) {
+    _remainder_handler = h;
+    _rest_arg_usage    = arg_usage_suffix;
+  }
+
+  /**
+   * Attach a `Guard` to the command at @p dotted_path (e.g. "wifi.scan"). When the guard returns
+   * false for the caller, dispatch does not run the handler; the command is omitted from help.
    */
   bool setGuardFor(const char* dotted_path, Guard guard);
 
@@ -43,9 +61,8 @@ public:
   /** Dispatch text after the root token (e.g. " wifi status"). Bare / help / ? => full help. */
   void dispatch(const char* input_after_root, lomessage::Buffer& out, void* app_ctx);
 
-  /** One help line per leaf: "<root> <path> [usage]  (hint) - <brief>". @p sub_path is space-separated segments
-   *  under root (e.g. "wifi") or nullptr for all commands. Commands whose guard rejects @p app_ctx
-   *  (when non-null) are skipped; a group becomes hidden when every descendant is hidden. */
+  /** One help line per leaf: "<root> <path> [usage]  (hint) - <brief>". @p sub_path is
+   *  space-separated segments under root or nullptr for all commands. */
   void formatHelp(lomessage::Buffer& out, const char* sub_path = nullptr, void* app_ctx = nullptr) const;
 
   /** True if any descendant is visible to @p app_ctx. Guard-less engines are always visible. */
@@ -56,6 +73,10 @@ public:
 private:
   Command _root;
   const char* _root_brief = nullptr;
+  Guard _root_guard = nullptr;
+  Handler _bare_handler = nullptr;
+  Handler _remainder_handler = nullptr;
+  const char* _rest_arg_usage = nullptr;
 };
 
 }  // namespace locommand

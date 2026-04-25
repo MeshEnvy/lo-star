@@ -36,6 +36,15 @@ public:
    *  under @p app_ctx are hidden entirely (root line + sub-help both suppressed). */
   void formatGlobalHelp(lomessage::Buffer& out, void* app_ctx = nullptr) const;
 
+  /** Lines only: "  <root> - <brief>\\n" for each engine with @ref Engine::anyVisible. */
+  void appendVisibleEngineRoots(lomessage::Buffer& out, void* app_ctx) const;
+
+  /**
+   * When @p is_guest(app_ctx), @ref formatGlobalHelp shows only the guest screen (see @p append_guest)
+   * plus fixed `about` / `login` / `help` lines — no engine list.
+   */
+  static void setGuestHelp(bool (*is_guest)(void* app_ctx), void (*append_guest)(lomessage::Buffer& out));
+
 private:
   Engine* _engines[kMaxEngines];
   int _n;

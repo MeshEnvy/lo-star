@@ -31,6 +31,7 @@
       "+<lofi/*.pb.c>",
       "+<lofs/*.cpp>",
       "+<lofs/backends/*.cpp>",
+      "+<loabout/*.cpp>",
       "+<louser/*.cpp>",
       "+<louser/*.pb.c>"
     ],
@@ -43,6 +44,7 @@
       "-I lofi",
       "-I lostar/include",
       "-I lofs/include",
+      "-I loabout/include",
       "-I louser/include",
       "-I louser"
     ]

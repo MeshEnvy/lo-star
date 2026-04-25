@@ -35,11 +35,10 @@ struct Context {
 typedef void (*Handler)(Context& ctx);
 
 /**
- * Pure predicate of caller identity. Used for both dispatch-time authorization and help-time
- * visibility — MUST NOT produce output. Takes the same @p app_ctx the dispatcher hands to
- * handlers, so the caller identity is available (e.g. a `lostar::NodeRef*` stashed by
- * `LotatoCli::dispatchLine`). A leaf/group with a guard is hidden from help when the guard
- * returns false, and dispatch emits a canned error without touching the handler.
+ * Pure predicate of caller identity. Used for dispatch-time authorization and help visibility —
+ * MUST NOT produce output. Takes the same @p app_ctx the dispatcher hands to handlers (e.g. a
+ * `lostar::NodeRef*`). A leaf/group with a guard is hidden from help when the guard returns false,
+ * and dispatch emits a canned response without running the handler.
  */
 typedef bool (*Guard)(void* app_ctx);
 
