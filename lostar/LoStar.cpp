@@ -3,7 +3,10 @@
 #include <lodb/LoDB.h>
 #include <lolog/LoLog.h>
 #include <lofs/LoFS.h>
+#include <lofs/PlatformMount.h>
 #include <losettings/LoSettings.h>
+
+#include <cstdlib>
 
 #ifndef LODB_TEST_MOUNT
 #define LODB_TEST_MOUNT "/__ext__"
@@ -15,11 +18,14 @@
 
 namespace LoStar {
 
-void boot(std::initializer_list<LoFS::FSysBinding> mounts) {
+void boot(std::initializer_list<LoFS::FsVolumeBinding> mounts) {
   if (mounts.size() > 0) {
     (void)LoFS::mount(mounts);
   }
-  LoFS::mountDefaults();
+  if (!lofs::mount_platform_volumes()) {
+    ::lolog::LoLog::error("lostar", "lofs::mount_platform_volumes failed (e.g. LOFS_CAP_SD but no card)");
+    std::abort();
+  }
   ::lolog::LoLog::registerConfigSchema();
   ::lolog::LoLog::loadFromSettings();
 

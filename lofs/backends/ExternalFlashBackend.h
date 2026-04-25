@@ -8,9 +8,12 @@ class ExternalFlashBackend : public FsBackend {
 public:
   static ExternalFlashBackend& instance();
 
+  /** True when `/__ext__` is backed by a volume other than the internal-flash delegate (nRF QSPI, …). */
+  bool hasDedicatedVolume() const { return vol_ != nullptr && !delegate_internal_; }
+
   bool available() const override;
-  File open(const char* path, uint8_t mode) override;
-  File open(const char* path, const char* mode) override;
+  IoFile open(const char* path, uint8_t mode) override;
+  IoFile open(const char* path, const char* mode) override;
   bool exists(const char* path) override;
   bool mkdir(const char* path) override;
   bool remove(const char* path) override;
@@ -21,11 +24,11 @@ public:
 
 private:
   ExternalFlashBackend();
-  void bindPlatformFs();
-  bool _delegate_internal = false;
-  FSys* _fs = nullptr;
+  void bindPlatformVolume();
+  bool delegate_internal_ = false;
+  FsVolume* vol_ = nullptr;
 };
 
 }  // namespace lofs
 
-extern "C" lofs::FSys* lofs_variant_external_fs(void) __attribute__((weak));
+extern "C" lofs::FsVolume* lofs_variant_external_volume(void) __attribute__((weak));

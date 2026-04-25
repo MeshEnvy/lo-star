@@ -8,12 +8,12 @@ class InternalFlashBackend : public FsBackend {
 public:
   static InternalFlashBackend& instance();
 
-  /** Runtime override (see `LoFS::bindInternalFs`). Passing `nullptr` re-binds the platform default. */
-  void bindFs(FSys* fs);
+  /** Runtime override (see `LoFS::bindInternalFs` / `bindVolume`). Passing `nullptr` re-binds the platform default. */
+  void bindVolume(FsVolume* vol);
 
   bool available() const override;
-  File open(const char* path, uint8_t mode) override;
-  File open(const char* path, const char* mode) override;
+  IoFile open(const char* path, uint8_t mode) override;
+  IoFile open(const char* path, const char* mode) override;
   bool exists(const char* path) override;
   bool mkdir(const char* path) override;
   bool remove(const char* path) override;
@@ -24,8 +24,8 @@ public:
 
 private:
   InternalFlashBackend();
-  void bindPlatformFs();
-  FSys* _fs = nullptr;
+  void bindPlatformVolume();
+  FsVolume* vol_ = nullptr;
 };
 
 }  // namespace lofs

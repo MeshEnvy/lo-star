@@ -379,7 +379,7 @@ std::vector<void *> LoDb::select(const char *table_name, LoDbFilter filter, LoDb
         return results;
     }
 
-    File dir = LoFS::open(table->table_path, FILE_O_READ);
+    lofs::IoFile dir = LoFS::open(table->table_path, FILE_O_READ);
     if (!dir) {
         LODB_LOG_DEBUG("Table directory not found: %s", table->table_path);
         return results;
@@ -392,7 +392,7 @@ std::vector<void *> LoDb::select(const char *table_name, LoDbFilter filter, LoDb
     }
 
     while (true) {
-        File file = dir.openNextFile();
+        lofs::IoFile file = dir.openNextFile();
         if (!file) {
             break;
         }
@@ -485,7 +485,7 @@ int LoDb::count(const char *table_name, LoDbFilter filter)
     int cnt = 0;
 
     if (!filter) {
-        File dir = LoFS::open(table->table_path, FILE_O_READ);
+        lofs::IoFile dir = LoFS::open(table->table_path, FILE_O_READ);
         if (!dir) {
             LODB_LOG_DEBUG("Table directory not found: %s", table->table_path);
             return 0;
@@ -498,7 +498,7 @@ int LoDb::count(const char *table_name, LoDbFilter filter)
         }
 
         while (true) {
-            File file = dir.openNextFile();
+            lofs::IoFile file = dir.openNextFile();
             if (!file) {
                 break;
             }
@@ -545,7 +545,7 @@ LoDbError LoDb::truncate(const char *table_name)
         return LODB_ERR_INVALID;
     }
 
-    File dir = LoFS::open(table->table_path, FILE_O_READ);
+    lofs::IoFile dir = LoFS::open(table->table_path, FILE_O_READ);
     if (!dir) {
         LODB_LOG_DEBUG("Table directory not found: %s (already empty)", table->table_path);
         return LODB_OK;
@@ -559,7 +559,7 @@ LoDbError LoDb::truncate(const char *table_name)
 
     int deletedCount = 0;
     while (true) {
-        File file = dir.openNextFile();
+        lofs::IoFile file = dir.openNextFile();
         if (!file) {
             break;
         }

@@ -1,26 +1,34 @@
 #pragma once
 
-#include <lofs/FsBackend.h>
+#include <lofs/FsVolume.h>
+
+#if defined(ESP32) || defined(ARCH_ESP32) || defined(RP2040_PLATFORM)
+
+#include <FS.h>
 
 namespace lofs {
 
-class SdBackend : public FsBackend {
+/** Wraps Arduino `fs::FS` (LittleFS, SPIFFS, FAT partition, …). */
+class ArduinoFsVolume final : public FsVolume {
 public:
-  static SdBackend& instance();
+  explicit ArduinoFsVolume(fs::FS* fs = nullptr) : fs_(fs) {}
 
-  bool available() const override;
+  void bindFs(fs::FS* fs) { fs_ = fs; }
+
   IoFile open(const char* path, uint8_t mode) override;
   IoFile open(const char* path, const char* mode) override;
   bool exists(const char* path) override;
   bool mkdir(const char* path) override;
   bool remove(const char* path) override;
   bool rename(const char* from, const char* to) override;
-  bool rmdir(const char* path, bool recursive) override;
+  bool rmdir(const char* path) override;
   uint64_t totalBytes() override;
   uint64_t usedBytes() override;
 
 private:
-  SdBackend();
+  fs::FS* fs_;
 };
 
 }  // namespace lofs
+
+#endif

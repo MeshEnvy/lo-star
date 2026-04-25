@@ -11,6 +11,6 @@ namespace LoStar {
  * - register/load LoLog config
  * - optional self-tests gated by compile flags
  */
-void boot(std::initializer_list<LoFS::FSysBinding> mounts = {});
+void boot(std::initializer_list<LoFS::FsVolumeBinding> mounts = {});
 
 }  // namespace LoStar

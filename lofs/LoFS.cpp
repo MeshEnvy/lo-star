@@ -5,6 +5,7 @@
 #include "backends/RamBackend.h"
 #include "backends/SdBackend.h"
 
+#include <cstdio>
 #include <cstring>
 
 #if __has_include(<lolog/LoLog.h>)
@@ -14,7 +15,8 @@
 #define LOFS_LOG_DEBUG(...) ((void)0)
 #endif
 
-#if defined(ESP32_PLATFORM)
+#if defined(ARCH_ESP32)
+#include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 static SemaphoreHandle_t s_lofs_mtx;
 static void lofs_lock() {
@@ -101,9 +103,9 @@ constexpr size_t kCopyBuf = 512;
 
 bool copy_stream(lofs::FsBackend* from_b, const char* from_p, lofs::FsBackend* to_b, const char* to_p) {
   if (!from_b || !to_b || !from_p || !to_p) return false;
-  File in = from_b->open(from_p, FILE_O_READ);
+  lofs::IoFile in = from_b->open(from_p, FILE_O_READ);
   if (!in) return false;
-  File out = to_b->open(to_p, FILE_O_WRITE);
+  lofs::IoFile out = to_b->open(to_p, FILE_O_WRITE);
   if (!out) {
     in.close();
     return false;
@@ -204,21 +206,21 @@ bool LoFS::unmount(const char* prefix) {
   return false;
 }
 
-bool LoFS::mount(const char* prefix, lofs::FSys* fs) {
-  if (!prefix || !prefix[0]) return false;
+bool LoFS::mount(const char* prefix, lofs::FsVolume* vol) {
+  if (!prefix || !prefix[0] || !vol) return false;
   if (strcmp(prefix, "/__int__") == 0) {
     auto& inb = lofs::InternalFlashBackend::instance();
-    inb.bindFs(fs);
+    inb.bindVolume(vol);
     return mount("/__int__", &inb);
   }
-  LOFS_LOG_DEBUG("mount(FSys): unsupported mount prefix: %s", prefix);
+  LOFS_LOG_DEBUG("mount(FsVolume): unsupported mount prefix: %s", prefix);
   return false;
 }
 
-bool LoFS::mount(std::initializer_list<FSysBinding> bindings) {
+bool LoFS::mount(std::initializer_list<FsVolumeBinding> bindings) {
   bool ok = true;
   for (const auto& b : bindings) {
-    ok = mount(b.prefix, b.fs) && ok;
+    ok = mount(b.prefix, b.vol) && ok;
   }
   return ok;
 }
@@ -231,61 +233,47 @@ lofs::FsBackend* LoFS::resolveBackend(const char* virtual_path, char* stripped_o
   return ok ? b : nullptr;
 }
 
-void LoFS::bindInternalFs(lofs::FSys* fs) {
-  (void)mount("/__int__", fs);
+void LoFS::bindInternalFs(lofs::FsVolume* vol) {
+  if (!vol) {
+    lofs::InternalFlashBackend::instance().bindVolume(nullptr);
+    return;
+  }
+  (void)mount("/__int__", vol);
 }
 
-void LoFS::mountDefaults() {
-  auto& inb = lofs::InternalFlashBackend::instance();
-  auto& exb = lofs::ExternalFlashBackend::instance();
-  auto& sdb = lofs::SdBackend::instance();
-  auto& ram = lofs::RamBackend::instance();
-
-  if (inb.available()) mount("/__int__", &inb);
-
-#if defined(ESP32_PLATFORM) || defined(RP2040_PLATFORM)
-  if (inb.available()) mount("/__ext__", &exb);
-#else
-  if (exb.available()) mount("/__ext__", &exb);
-#endif
-
-  if (sdb.available()) mount("/__sd__", &sdb);
-  if (ram.available()) mount("/__ram__", &ram);
-}
-
-static File open_norm(const char* filepath, uint8_t mode) {
+static lofs::IoFile open_norm(const char* filepath, uint8_t mode) {
   char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return lofs::invalid_file();
+  if (!normalize_virtual(filepath, virt, sizeof(virt))) return {};
   lofs::FsBackend* b = nullptr;
   char stripped[256];
   lofs_lock();
   if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
     lofs_unlock();
-    return lofs::invalid_file();
+    return {};
   }
-  File f = b->open(stripped, mode);
+  lofs::IoFile f = b->open(stripped, mode);
   lofs_unlock();
   return f;
 }
 
-static File open_norm_str(const char* filepath, const char* mode) {
+static lofs::IoFile open_norm_str(const char* filepath, const char* mode) {
   char virt[256];
-  if (!normalize_virtual(filepath, virt, sizeof(virt))) return lofs::invalid_file();
+  if (!normalize_virtual(filepath, virt, sizeof(virt))) return {};
   lofs::FsBackend* b = nullptr;
   char stripped[256];
   lofs_lock();
   if (!resolve_locked(virt, &b, stripped, sizeof(stripped))) {
     lofs_unlock();
-    return lofs::invalid_file();
+    return {};
   }
-  File f = b->open(stripped, mode);
+  lofs::IoFile f = b->open(stripped, mode);
   lofs_unlock();
   return f;
 }
 
-File LoFS::open(const char* filepath, uint8_t mode) { return open_norm(filepath, mode); }
+lofs::IoFile LoFS::open(const char* filepath, uint8_t mode) { return open_norm(filepath, mode); }
 
-File LoFS::open(const char* filepath, const char* mode) { return open_norm_str(filepath, mode); }
+lofs::IoFile LoFS::open(const char* filepath, const char* mode) { return open_norm_str(filepath, mode); }
 
 bool LoFS::exists(const char* filepath) {
   char virt[256];
@@ -352,7 +340,7 @@ bool LoFS::writeFileAtomic(const char* filepath, const uint8_t* data, size_t siz
   // Best-effort cleanup from any previous interrupted write.
   if (LoFS::exists(tmp_path)) (void)LoFS::remove(tmp_path);
 
-  File f = LoFS::open(tmp_path, FILE_O_WRITE);
+  lofs::IoFile f = LoFS::open(tmp_path, FILE_O_WRITE);
   if (!f) return false;
 
   size_t written = f.write(data, size);
@@ -379,7 +367,7 @@ bool LoFS::readFileAtomic(const char* filepath, uint8_t* out, size_t cap, size_t
   // Guard against FS backends that may return a truthy File for absent paths.
   if (!LoFS::exists(filepath)) return false;
 
-  File f = LoFS::open(filepath, FILE_O_READ);
+  lofs::IoFile f = LoFS::open(filepath, FILE_O_READ);
   if (!f) {
     LOFS_LOG_DEBUG("readFileAtomic: exists but open failed: %s", filepath);
     return false;

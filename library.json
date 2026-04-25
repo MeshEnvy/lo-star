@@ -30,7 +30,9 @@
       "+<losettings/*.pb.c>",
       "+<lofi/*.pb.c>",
       "+<lofs/*.cpp>",
+      "+<lofs/adapters/*.cpp>",
       "+<lofs/backends/*.cpp>",
+      "+<lofs/platform/*.cpp>",
       "+<loabout/*.cpp>",
       "+<louser/*.cpp>",
       "+<louser/*.pb.c>"

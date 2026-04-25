@@ -56,7 +56,6 @@ static int s_scan_count = 0;
 enum class WifiScanPhase : uint8_t { Idle, DisconnectWait, Scanning };
 static WifiScanPhase s_wscan_phase = WifiScanPhase::Idle;
 static uint32_t s_wscan_t0 = 0;
-static bool s_wscan_results_ready = false;
 
 constexpr int kKnownCacheMax = 8;
 struct KnownCacheEntry {
@@ -751,7 +750,6 @@ void Lofi::serviceWifiScan() {
           staFailoverSuppress(false);
           resumeStaSavedCredentials();
           s_wscan_phase = WifiScanPhase::Idle;
-          s_wscan_results_ready = false;
           if (_scan_cb) _scan_cb(_scan_cb_ctx, "Err - WiFi scan start failed");
           lofi_async_busy(false);
         } else {
@@ -775,12 +773,10 @@ void Lofi::serviceWifiScan() {
       if (cnt == WIFI_SCAN_FAILED) {
         WiFi.scanDelete();
         s_scan_count = 0;
-        s_wscan_results_ready = false;
         if (_scan_cb) _scan_cb(_scan_cb_ctx, "Err - WiFi scan failed");
       } else {
         wifi_scan_fill_from_driver((int)cnt);
         WiFi.scanDelete();
-        s_wscan_results_ready = true;
         if (_scan_cb) {
           lomessage::Buffer scan_buf;
           formatScanBody(scan_buf);
@@ -799,16 +795,15 @@ void Lofi::serviceWifiScan() {
 void Lofi::requestWifiScan() {
   serviceWifiScan();
   if (s_wscan_phase != WifiScanPhase::Idle) return;
-  if (s_wscan_results_ready) {
-    s_wscan_results_ready = false;
-    return;
-  }
+
+  // Invalidate old scan results when starting a new scan
+  s_scan_count = 0;
+
   staFailoverSuppress(true);
   lofi_wifi_prepare_driver();
   if (!WiFi.mode(WIFI_STA)) {
     staFailoverSuppress(false);
     s_wscan_phase = WifiScanPhase::Idle;
-    s_wscan_results_ready = false;
     if (_scan_cb) _scan_cb(_scan_cb_ctx, "Err - WiFi driver init failed");
     lofi_async_busy(false);
     return;

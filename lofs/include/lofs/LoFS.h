@@ -9,27 +9,24 @@
 
 class LoFS {
 public:
-  struct FSysBinding {
+  struct FsVolumeBinding {
     const char* prefix;
-    lofs::FSys* fs;
+    lofs::FsVolume* vol;
   };
 
   static bool mount(const char* prefix, lofs::FsBackend* backend);
-  /** Mount host filesystem handles by virtual prefix (currently supports `/__int__`). */
-  static bool mount(const char* prefix, lofs::FSys* fs);
-  static bool mount(std::initializer_list<FSysBinding> bindings);
+  /** Mount host filesystem by virtual prefix (currently supports `/__int__`). */
+  static bool mount(const char* prefix, lofs::FsVolume* vol);
+  static bool mount(std::initializer_list<FsVolumeBinding> bindings);
   static bool unmount(const char* prefix);
   static lofs::FsBackend* resolveBackend(const char* virtual_path, char* stripped_out, size_t stripped_cap);
 
-  /** Override the platform-default internal-flash fs driver (e.g. when the app has chosen SPIFFS
-   *  instead of LittleFS on ESP32). Call before `mountDefaults` / any `LoFS::open` so lofs reuses
-   *  the same mounted volume as the host firmware. `nullptr` restores the platform default. */
-  static void bindInternalFs(lofs::FSys* fs);
+  /** Override the platform-default internal-flash volume (SPIFFS, LittleFS, …). Call before
+   *  `lofs::mount_platform_volumes()` / any `LoFS::open`. `nullptr` restores the platform default. */
+  static void bindInternalFs(lofs::FsVolume* vol);
 
-  static void mountDefaults();
-
-  static File open(const char* filepath, uint8_t mode);
-  static File open(const char* filepath, const char* mode);
+  static lofs::IoFile open(const char* filepath, uint8_t mode);
+  static lofs::IoFile open(const char* filepath, const char* mode);
   static bool exists(const char* filepath);
   static bool mkdir(const char* filepath);
   static bool remove(const char* filepath);

@@ -83,17 +83,8 @@ void h_wifi_scan(locommand::Context& ctx) {
 
   lostar_deferred_reply dr = lostar_capture_deferred_reply();
   if (!dr.fire) {
-    if (lf.scanSnapshotCount() > 0) {
-      lf.formatScanBody(ctx.out);
-    } else {
-      lf.requestWifiScan();
-      ctx.out.append("Scanning for WiFi devices...");
-    }
-    return;
-  }
-
-  if (lf.scanSnapshotCount() > 0) {
-    lf.formatScanBody(ctx.out);
+    lf.requestWifiScan();
+    ctx.out.append("Scanning for WiFi devices...");
     return;
   }
 
