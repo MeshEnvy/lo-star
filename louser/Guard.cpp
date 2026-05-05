@@ -1,6 +1,5 @@
 #include <louser/Guard.h>
-#include <louser/Auth.h>
-
+#include <lostar/AuthProvider.h>
 #include <lostar/NodeId.h>
 
 namespace louser {
@@ -16,19 +15,22 @@ const lostar::NodeRef* node_ref(void* app_ctx) {
 bool require_user(void* app_ctx) {
   const lostar::NodeRef* nr = node_ref(app_ctx);
   if (!nr) return false;
-  return Auth::instance().sessions().whoami(*nr) != 0;
+  auto* p = lostar::getAuthProvider();
+  return p ? p->isUser(*nr) : false;
 }
 
 bool require_logged_out(void* app_ctx) {
   const lostar::NodeRef* nr = node_ref(app_ctx);
   if (!nr) return false;
-  return Auth::instance().sessions().whoami(*nr) == 0;
+  auto* p = lostar::getAuthProvider();
+  return p ? !p->isUser(*nr) : true;
 }
 
 bool require_admin(void* app_ctx) {
   const lostar::NodeRef* nr = node_ref(app_ctx);
   if (!nr) return false;
-  return Auth::instance().isAdmin(*nr);
+  auto* p = lostar::getAuthProvider();
+  return p ? p->isAdmin(*nr) : false;
 }
 
 }  // namespace louser

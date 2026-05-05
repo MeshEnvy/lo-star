@@ -2,6 +2,7 @@
 #include <louser/Auth.h>
 #include <louser/Guard.h>
 #include <louser/User.h>
+#include <lostar/AuthProvider.h>
 
 #include <lolog/LoLog.h>
 #include <locommand/Router.h>
@@ -32,12 +33,13 @@ void do_login(locommand::Context& ctx, const User& u) {
 /* ── user whoami ───────────────────────────────────────────────────── */
 void h_whoami(locommand::Context& ctx) {
   const lostar::NodeRef* nr = node_ref_from_ctx(ctx);
-  User u;
-  if (!nr || !Auth::instance().currentUser(*nr, u)) {
+  auto* p = lostar::getAuthProvider();
+  char name[64] = {};
+  if (!nr || !p || !p->getCurrentUser(*nr, name, sizeof(name))) {
     ctx.out.append("(not signed in)");
     return;
   }
-  ctx.out.appendf("%s%s", u.username, u.admin ? " (admin)" : "");
+  ctx.out.appendf("%s%s", name[0] ? name : "Unknown", p->isAdmin(*nr) ? " (admin)" : "");
 }
 
 /* ── `bye` bare handler (only way to log out) ─────────────────────── */
@@ -142,6 +144,7 @@ void register_engine(locommand::Engine& user_eng) {
   user_eng.setRootBrief("user accounts & sessions");
 }
 
+
 namespace {
 
 bool guest_session(void* app_ctx) { return !require_user(app_ctx); }
@@ -149,6 +152,26 @@ bool guest_session(void* app_ctx) { return !require_user(app_ctx); }
 void guest_help_banner(lomessage::Buffer& out) {
   out.append("You're not signed in.\n");
 }
+
+class DefaultAuthProvider : public lostar::AuthProvider {
+public:
+  bool isUser(const lostar::NodeRef& caller) override {
+    return Auth::instance().sessions().whoami(caller) != 0;
+  }
+  bool isAdmin(const lostar::NodeRef& caller) override {
+    return Auth::instance().isAdmin(caller);
+  }
+  bool getCurrentUser(const lostar::NodeRef& caller, char* name_out, size_t name_cap) override {
+    User u;
+    if (Auth::instance().currentUser(caller, u)) {
+      if (name_out && name_cap > 0) {
+        snprintf(name_out, name_cap, "%s", u.username);
+      }
+      return true;
+    }
+    return false;
+  }
+};
 
 }  // namespace
 
@@ -158,8 +181,11 @@ void init() {
   static locommand::Engine s_bye_eng{"bye"};
   static locommand::Engine s_whoami_eng{"whoami"};
   static locommand::Engine s_user_eng{"user"};
+  static DefaultAuthProvider s_provider;
   if (s_inited) return;
   s_inited = true;
+
+  lostar::setAuthProvider(&s_provider);
 
   s_hi_eng.setRootGuard(&require_logged_out);
   s_hi_eng.setRestHandler(&h_hi, "<username> <password>");
